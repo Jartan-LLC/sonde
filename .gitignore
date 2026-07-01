@@ -34,6 +34,12 @@ htmlcov/
 # Docker
 data/
 
+# Ruff
+.ruff_cache/
+
+# Distribution
+*.whl
+
 # Logs
 *.log
 logs/
