@@ -1,6 +1,6 @@
-# Project Name
+# Sonde
 
-<!-- ONE LINE: what this project is, primary language/framework, deployment target -->
+Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Python CLI tool, Docker, PyPI package.
 
 ## Rules
 
@@ -36,9 +36,8 @@
 
 ## Verify
 
-<!-- REQUIRED — replace with your build/test/lint commands:
-make test
-npm run build && npm test
-cargo check && cargo test
-pytest -x
--->
+```bash
+ruff check .
+ruff format --check .
+pytest
+```

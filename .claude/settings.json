@@ -3,7 +3,7 @@
     "caveman@caveman": true,
     "claudivis@grimoire": true,
     "gitwise@grimoire": true,
-    "memoria@grimoire": true,
+    "memoria@grimoire": false,
     "praxis@grimoire": true,
     "pythonica@grimoire": true,
     "recursio@grimoire": true
@@ -21,5 +21,9 @@
         "repo": "Jartan-LLC/grimoire"
       }
     }
+  },
+  "skillOverrides": {
+    "praxis:frontend-patterns": "off",
+    "praxis:frontend-reviewer": "off"
   }
 }
