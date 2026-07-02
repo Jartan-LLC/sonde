@@ -18,7 +18,8 @@ Initial release.
   fastest sustainable request interval, then combines them into a recommended
   interval and a full-scrape wall-clock estimate.
 - Pluggable endpoint framework: subclass `Endpoint`, decorate with `@register`,
-  and the endpoint becomes a CLI subcommand.
+  and the endpoint becomes a CLI subcommand. Paginated endpoints share the
+  `--page-size` / `--total-items` flags via `add_pagination_args`.
 - Two built-in endpoints: `asset-owners` (Roblox collectible owners) and
   `github-stargazers` (GitHub repository stargazers).
 - Provider abstraction for parsing rate-limit response headers, with a generic
@@ -33,7 +34,8 @@ Initial release.
 - Type annotations across the public API, with a PEP 561 `py.typed` marker so
   downstream type checkers see them.
 - Public extension API re-exported from the top-level `sonde` package
-  (`Endpoint`, `RequestSpec`, `PageResult`, `register`, `Provider`).
+  (`Endpoint`, `RequestSpec`, `PageResult`, `register`, `Provider`,
+  `add_pagination_args`, `pagination_from_args`).
 - Defined process exit codes: `0` success, `2` precondition failure (bad
   arguments, unwritable `--output`, or an unusable endpoint response), `1`
   unexpected crash, `130` interrupted.

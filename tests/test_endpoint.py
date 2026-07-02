@@ -79,14 +79,33 @@ def test_asset_owners_uses_roblox_provider():
 
 
 def test_total_items():
-    assert AssetOwnersEndpoint(asset_id=1, total_copies=1470000).total_items() == 1470000
+    assert AssetOwnersEndpoint(asset_id=1, total_items=1470000).total_items() == 1470000
     assert AssetOwnersEndpoint(asset_id=1).total_items() is None
 
 
 def test_from_args_roundtrip():
-    ns = argparse.Namespace(asset_id=42, total_copies=999, page_size=50, sort_order="Desc")
+    ns = argparse.Namespace(asset_id=42, total_items=999, page_size=50, sort_order="Desc")
     ep = AssetOwnersEndpoint.from_args(ns)
     assert ep.asset_id == 42
     assert ep.total_items() == 999
     assert ep.page_size == 50
     assert ep.sort_order == "Desc"
+
+
+# --------------------------------------------------------------------------- #
+# Shared pagination helpers
+# --------------------------------------------------------------------------- #
+def test_add_pagination_args_defaults():
+    p = argparse.ArgumentParser()
+    endpoint.add_pagination_args(p, page_max=100)
+    a = p.parse_args([])
+    assert a.page_size == 100 and a.total_items is None  # default = page_max, None
+    a2 = p.parse_args(["--page-size", "40", "--total-items", "7"])
+    assert a2.page_size == 40 and a2.total_items == 7
+
+
+def test_pagination_from_args_clamps():
+    over = argparse.Namespace(page_size=500, total_items=999)
+    assert endpoint.pagination_from_args(over, page_max=100) == (100, 999)  # clamped
+    under = argparse.Namespace(page_size=50, total_items=None)
+    assert endpoint.pagination_from_args(under, page_max=100) == (50, None)

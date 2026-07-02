@@ -16,7 +16,14 @@ import argparse
 import re
 from typing import Any, Self
 
-from ..endpoint import Endpoint, PageResult, RequestSpec, register
+from ..endpoint import (
+    Endpoint,
+    PageResult,
+    RequestSpec,
+    add_pagination_args,
+    pagination_from_args,
+    register,
+)
 from ..provider import GitHubProvider, Provider
 
 
@@ -48,13 +55,13 @@ class GitHubStargazersEndpoint(Endpoint):
         self,
         owner: str,
         repo: str,
-        total: int | None = None,
-        per_page: int = 100,
+        total_items: int | None = None,
+        page_size: int = 100,
     ) -> None:
         self.owner = owner
         self.repo = repo
-        self._total = total
-        self.per_page = min(per_page, self.MAX_PAGE)
+        self._total = total_items
+        self.page_size = min(page_size, self.MAX_PAGE)
 
     def _make_provider(self) -> Provider:
         return GitHubProvider()
@@ -63,18 +70,18 @@ class GitHubStargazersEndpoint(Endpoint):
     def add_arguments(cls, p: argparse.ArgumentParser) -> None:
         p.add_argument("--owner", required=True, help="repo owner/org, e.g. 'anthropics'")
         p.add_argument("--repo", required=True, help="repo name, e.g. 'anthropic-sdk-python'")
-        p.add_argument("--total", type=int, default=None, help="known stargazer count")
-        p.add_argument("--per-page", type=int, default=100, help="items per page (max 100)")
+        add_pagination_args(p, page_max=cls.MAX_PAGE)
 
     @classmethod
     def from_args(cls, a: argparse.Namespace) -> Self:
-        return cls(owner=a.owner, repo=a.repo, total=a.total, per_page=a.per_page)
+        page_size, total_items = pagination_from_args(a, page_max=cls.MAX_PAGE)
+        return cls(owner=a.owner, repo=a.repo, total_items=total_items, page_size=page_size)
 
     def build_request(self, cursor: Any) -> RequestSpec:
         page = cursor or 1  # GitHub uses page-number pagination
         return RequestSpec(
             url=self.BASE.format(owner=self.owner, repo=self.repo),
-            params={"per_page": self.per_page, "page": page},
+            params={"per_page": self.page_size, "page": page},
         )
 
     def parse_page(self, response: Any) -> PageResult:

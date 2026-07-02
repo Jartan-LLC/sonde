@@ -52,7 +52,7 @@ def _args(tmp_path, *extra):
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -127,6 +127,28 @@ def test_log_format_choices():
 def test_output_default():
     args = build_parser().parse_args(["asset-owners", "--asset-id", "1"])
     assert args.output == "sonde_report.json"
+
+
+def test_pagination_defaults():
+    args = build_parser().parse_args(["asset-owners", "--asset-id", "1"])
+    assert args.page_size == 100 and args.total_items is None
+
+
+def test_pagination_flags_consistent_across_endpoints():
+    """Any registered endpoint that exposes pagination spells it as the paired
+    --page-size / --total-items, checked across every endpoint (not just two)."""
+    import argparse
+
+    from sonde import endpoint as endpoint_mod
+
+    for name, cls in endpoint_mod.all_endpoints().items():
+        p = argparse.ArgumentParser()
+        cls.add_arguments(p)
+        dests = {a.dest for a in p._actions}
+        if dests & {"page_size", "total_items"}:
+            assert {"page_size", "total_items"} <= dests, (
+                f"{name}: pagination flags must be the paired --page-size/--total-items"
+            )
 
 
 def test_burst_sizes_parses_to_list():
@@ -207,7 +229,7 @@ def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -285,7 +307,7 @@ def test_log_format_json_on_stderr(tmp_path, monkeypatch, capfd, restore_root_lo
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -310,7 +332,7 @@ def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, restore
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
