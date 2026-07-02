@@ -198,7 +198,11 @@ def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, restore_root_logge
 def _assert_all_stderr_json(captured):
     """Every stderr line must be valid JSON. A broken %-style format string
     causes logging.Handler.handleError to print a traceback to stderr, which
-    would fail json.loads here — catching silent conversion bugs."""
+    would fail json.loads here — catching silent conversion bugs.
+
+    Relies on logging.raiseExceptions being True (the pytest/CPython default);
+    if it were flipped to False, handleError would swallow the error silently
+    and this canary would stop catching broken format strings."""
     lines = [line for line in captured.err.strip().split("\n") if line.strip()]
     assert len(lines) > 0
     for line in lines:
@@ -310,6 +314,43 @@ def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, restore_root_l
         "json",
     ]
     cli.main(argv)
+    _assert_all_stderr_json(capfd.readouterr())
+
+
+# --------------------------------------------------------------------------- #
+# main() crash / interrupt handling
+# --------------------------------------------------------------------------- #
+def test_main_crash_logs_json_and_exits_1(monkeypatch, capfd, restore_root_logger):
+    """A crash in run() is routed through the logger: stderr stays valid JSON
+    with an `exc` key and the process exits 1 — the behaviour the top-level
+    `except Exception` handler advertises."""
+
+    def boom(args):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(cli, "run", boom)
+    argv = ["asset-owners", "--asset-id", "1", "--log-format", "json"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 1
+    captured = capfd.readouterr()
+    _assert_all_stderr_json(captured)
+    err_lines = [json.loads(line) for line in captured.err.strip().split("\n") if line.strip()]
+    assert any("kaboom" in line.get("exc", "") for line in err_lines)
+
+
+def test_main_keyboard_interrupt_exits_130(monkeypatch, capfd, restore_root_logger):
+    """KeyboardInterrupt is caught before `except Exception`, logged as a
+    warning, and exits 130 (128 + SIGINT)."""
+
+    def interrupt(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run", interrupt)
+    argv = ["asset-owners", "--asset-id", "1", "--log-format", "json"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 130
     _assert_all_stderr_json(capfd.readouterr())
 
 

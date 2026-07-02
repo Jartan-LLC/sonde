@@ -149,7 +149,10 @@ class TestJsonFormatter:
         lines = result.strip().split("\n")
         assert len(lines) == 1
 
-    def test_escapes_control_chars(self):
+    def test_control_chars_neutralised_by_json_serialisation(self):
+        # JsonFormatter has no bespoke escaping — it relies on json.dumps, which
+        # always \u-escapes control chars. This verifies that round-trip leaves
+        # no raw control chars (and thus a valid single-line record).
         record = _make_record("headers: \x1b[31mred\x00null\nnewline")
         result = self.fmt.format(record)
         assert "\x1b" not in result

@@ -69,6 +69,8 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
+            # Strip banner leading \n (see setup_logging's formatter contract) so
+            # each record stays a single line.
             "message": record.getMessage().lstrip("\n"),
         }
         if record.exc_info:
@@ -77,7 +79,13 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(*, level: int = logging.INFO, fmt: str = "plain") -> None:
-    """Configure stdlib logging. Call once at startup."""
+    """Configure stdlib logging. Call once at startup.
+
+    Formatter contract: log messages may carry leading newlines — phase banners
+    are emitted as ``logger.info("\\n== PHASE ...")`` for interactive spacing. Any
+    new formatter registered here must decide how to handle them: PlainFormatter
+    preserves them, JsonFormatter strips them to keep each record single-line.
+    """
     logging.config.dictConfig(
         {
             "version": 1,
