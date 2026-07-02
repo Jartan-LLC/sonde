@@ -165,9 +165,10 @@ def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root
     assert report["endpoint"] == "asset-owners"
     assert "estimate" in report
     assert not (tmp_path / "sonde_report.json").exists(), "default file should not be created"
-    for line in captured.err.strip().split("\n"):
-        if line.strip():
-            assert json.loads(line)["level"] != "INFO", "-q should suppress INFO"
+    err_lines = [line for line in captured.err.strip().split("\n") if line.strip()]
+    for line in err_lines:
+        level = json.loads(line)["level"]
+        assert level not in ("INFO", "DEBUG"), f"-q should suppress {level}"
 
 
 def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, restore_root_logger):

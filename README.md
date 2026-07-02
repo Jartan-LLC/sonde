@@ -169,13 +169,13 @@ Common options shared by all endpoints:
 
 ### Piping and machine-readable output
 
-Use `--output -` to write the JSON report to stdout instead of a file. Combine with `-q` to suppress log output for clean piping:
+Use `--output -` to write the JSON report to stdout instead of a file. Combine with `-q` to suppress INFO-level log noise on stderr:
 
 ```bash
 sonde asset-owners --asset-id 20573078 --output - -q | jq .estimate
 ```
 
-Use `--log-format json` for structured log lines (one JSON object per line on stderr), useful for log aggregators or CI pipelines:
+Use `--log-format json` for structured log lines on stderr (keys: `timestamp`, `level`, `logger`, `message`, `exc`), useful for log aggregators or CI pipelines:
 
 ```bash
 sonde asset-owners --asset-id 20573078 --log-format json 2>sonde.log

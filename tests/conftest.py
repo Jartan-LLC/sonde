@@ -35,5 +35,8 @@ def restore_root_logger():
     old_handlers = root.handlers[:]
     old_level = root.level
     yield
+    for h in root.handlers:
+        if h not in old_handlers:
+            h.close()
     root.handlers = old_handlers
     root.level = old_level

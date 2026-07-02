@@ -126,6 +126,13 @@ class TestJsonFormatter:
         lines = result.strip().split("\n")
         assert len(lines) == 1
 
+    def test_escapes_control_chars(self):
+        record = _make_record("headers: \x1b[31mred\x00null\nnewline")
+        result = self.fmt.format(record)
+        assert "\x1b" not in result
+        assert "\x00" not in result
+        assert "\n" not in result
+
 
 # --------------------------------------------------------------------------- #
 # setup_logging

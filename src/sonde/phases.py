@@ -157,7 +157,7 @@ def phase_seq(session, endpoint, budget, cap):
 # Recovery probe — shared logic + sync wrapper
 # --------------------------------------------------------------------------- #
 def _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
-    """Yield (step_seconds, cursor) for each recovery poll.
+    """Yield (step_seconds, cursor, cumulative_wait_s) for each recovery poll.
     Pure state machine — no I/O. Callers sleep then fetch after each yield."""
     step = start_step
     waited = 0.0
@@ -182,6 +182,7 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
         max_polls,
         max_wait,
     )
+    waited = 0.0
     for step, cur, waited in _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
         time.sleep(step)
         r = core.fetch(session, endpoint, cur, budget)
@@ -301,6 +302,7 @@ def phase_burst_async(
             recovery_polls,
             recovery_max,
         )
+        waited = 0.0
         for step, cur, waited in _recovery_steps(
             recovery_step, recovery_max, recovery_polls, cursor_pool
         ):
