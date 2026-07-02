@@ -160,7 +160,26 @@ Common options shared by all endpoints:
 | `--sweep-drain` | 500 | Cap on rapid requests used to empty the bucket before each interval |
 | `--sweep-tolerance` | 0.1 | Max fraction of 429s for an interval to count as sustainable |
 | `--margin` | 0.8 | Safety margin: pace at 80% of the measured max rate (0.8 = 25% slower than ceiling) |
-| `--output` | `sonde_report.json` | Path for the JSON report |
+| `--output` | `sonde_report.json` | Path for the JSON report (use `-` for stdout) |
+| `-v` / `--verbose` | off | Show per-request detail (sets log level to DEBUG) |
+| `-q` / `--quiet` | off | Only show warnings and errors (sets log level to WARNING) |
+| `--log-format` | `plain` | Log line format: `plain` (message-only) or `json` (structured) |
+
+`-v` and `-q` are mutually exclusive. Logs always go to stderr; the report goes to `--output`.
+
+### Piping and machine-readable output
+
+Use `--output -` to write the JSON report to stdout instead of a file. Combine with `-q` to suppress INFO-level log noise on stderr:
+
+```bash
+sonde asset-owners --asset-id 20573078 --output - -q | jq .estimate
+```
+
+Use `--log-format json` for structured log lines on stderr (keys: `timestamp`, `level`, `logger`, `message`, plus `exc` on error lines), useful for log aggregators or CI pipelines:
+
+```bash
+sonde asset-owners --asset-id 20573078 --log-format json 2>sonde.log
+```
 
 ## Docker
 

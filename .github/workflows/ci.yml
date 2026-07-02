@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -28,7 +28,7 @@ jobs:
       - run: pip install ruff && ruff check . && ruff format --check .
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -38,14 +38,22 @@ jobs:
           python-version: "3.12"
       - run: pip install -e '.[dev]' && pytest
 
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: docker build -t sonde:ci .
+      - run: docker run --rm sonde:ci --help
+
   check:
     if: always()
-    needs: [lint, test]
-    runs-on: ubuntu-latest
+    needs: [lint, test, docker]
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - run: |
-          results=("${{ needs.lint.result }}" "${{ needs.test.result }}")
+          results=("${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.docker.result }}")
           for r in "${results[@]}"; do
             if [[ "$r" != "success" && "$r" != "skipped" ]]; then
               echo "Check failed: $r"

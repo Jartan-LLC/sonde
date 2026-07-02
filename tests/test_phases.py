@@ -171,3 +171,70 @@ def test_estimate_rate_only_without_total():
     assert est["total_pages"] is None
     assert est["estimated_minutes"] is None
     assert est["safe_rate_per_min"] is not None  # rate still reported
+
+
+# --------------------------------------------------------------------------- #
+# Estimate — token-bucket inference (Priority 2)
+# --------------------------------------------------------------------------- #
+def test_estimate_infers_from_token_bucket():
+    """No authoritative headers and no swept floor, but a fully-OK burst plus a
+    measured window -> Priority-2 inference: (bucket / window) * 60 * margin."""
+    est = phases.phase_estimate(
+        FakeEndpoint(total=None, page_size=100),
+        page_count=100,
+        seq_summary={},
+        burst_results=[
+            {"burst_size": 10, "throttled_429": 0},
+            {"burst_size": 20, "throttled_429": 3},  # throttled -> excluded from bucket
+        ],
+        measured_window=12.0,
+        swept_interval=None,
+        margin=0.8,
+        rl={},
+    )
+    assert est["safe_rate_basis"].startswith("INFERRED")
+    assert est["measured_window_seconds"] == 12.0
+    assert est["safe_rate_per_min"] == pytest.approx(40.0, abs=1e-6)  # 10/12 * 60 * 0.8
+
+
+# --------------------------------------------------------------------------- #
+# Recovery probe — geometric backoff generator + measured return value
+# --------------------------------------------------------------------------- #
+def test_recovery_steps_geometric_backoff():
+    """_recovery_steps is a pure state machine; assert its backoff schedule,
+    cursor round-robin, and max_wait termination directly."""
+    steps = list(phases._recovery_steps(0.25, 5.0, 10, ["a", "b"]))
+    # cumulative wait (3rd tuple element) grows 0.25, then *1.6 each poll
+    waits = [w for _, _, w in steps]
+    assert waits == pytest.approx([0.25, 0.65, 1.29, 2.314, 3.9524, 6.57384], abs=1e-4)
+    # stops once cumulative >= max_wait (5.0): 6 polls, below max_polls=10
+    assert len(steps) == 6
+    # cursor round-robins over the pool
+    assert [c for _, c, _ in steps] == ["a", "b", "a", "b", "a", "b"]
+    # per-poll step grows by the 1.6 factor
+    sizes = [s for s, _, _ in steps]
+    assert sizes[1] == pytest.approx(sizes[0] * 1.6)
+
+
+def test_measure_recovery_returns_cumulative_wait(clock, monkeypatch, fake_endpoint):
+    """measure_recovery returns the cumulative wait at the first success (429 for
+    the first two polls, OK on the third)."""
+    calls = {"n": 0}
+
+    def fake_fetch(session, ep, cursor, budget):
+        budget.take()
+        calls["n"] += 1
+        ok = calls["n"] >= 3
+        return core.Result(status=200 if ok else 429, elapsed=0.0, count=100 if ok else 0)
+
+    monkeypatch.setattr(core, "fetch", fake_fetch)
+    waited = phases.measure_recovery(
+        None,
+        fake_endpoint,
+        core.Budget(100),
+        cursor_pool=["a", "b"],
+        start_step=0.25,
+        max_wait=90.0,
+        max_polls=15,
+    )
+    assert waited == pytest.approx(1.29, abs=1e-9)  # 0.25 + 0.4 + 0.64

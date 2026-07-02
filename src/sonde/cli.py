@@ -10,10 +10,14 @@ endpoint contributes its own options as a subcommand.
 
 import argparse
 import json
+import logging
 import sys
 
 from . import core, endpoint, phases
 from . import endpoints  # noqa: F401  (import registers all endpoints)
+from .logconfig import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def build_common_parser() -> argparse.ArgumentParser:
@@ -95,7 +99,31 @@ def build_common_parser() -> argparse.ArgumentParser:
         default=0.8,
         help="safety margin: recommended interval = floor / margin (0.8 => 25%% slower)",
     )
-    g.add_argument("--output", default="sonde_report.json")
+    g.add_argument(
+        "--output",
+        default="sonde_report.json",
+        help="report output file (use '-' for stdout)",
+    )
+
+    vq = c.add_mutually_exclusive_group()
+    vq.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show per-request detail (sets log level to DEBUG)",
+    )
+    vq.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="only show warnings and errors (sets log level to WARNING)",
+    )
+    c.add_argument(
+        "--log-format",
+        choices=["plain", "json"],
+        default="plain",
+        help="log line format: plain (message-only, default) or json (structured)",
+    )
     return c
 
 
@@ -125,10 +153,13 @@ def run(args) -> dict:
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
     session = core.build_session(max_conns=max_conns, headers=headers)
 
-    print(f"Endpoint : {ep.name}")
-    print(f"Provider : {provider.name}")
-    print(f"Auth     : {'credentials set' if provider.auth_headers() else 'none (anonymous)'}")
-    print(f"Budget   : {args.max_requests} requests total")
+    logger.info("Endpoint : %s", ep.name)
+    logger.info("Provider : %s", provider.name)
+    logger.info(
+        "Auth     : %s",
+        "credentials set" if provider.auth_headers() else "none (anonymous)",
+    )
+    logger.info("Budget   : %s requests total", args.max_requests)
 
     report = {"endpoint": ep.name, "provider": provider.name}
 
@@ -141,7 +172,7 @@ def run(args) -> dict:
     }
     report["ratelimit_headers"] = rl
     if sanity.rclass != core.RClass.OK:
-        print(
+        logger.warning(
             "\nAborting: no usable success response from the endpoint. "
             "Fix auth / arguments and re-run."
         )
@@ -169,8 +200,10 @@ def run(args) -> dict:
                 )
                 burst_impl = "httpx"
             except ImportError:
-                print("\n[!] --use-httpx set but httpx isn't installed (pip install httpx).")
-                print("    Falling back to the threaded requests burst.")
+                logger.warning(
+                    "\n[!] --use-httpx set but httpx isn't installed "
+                    "(pip install httpx); falling back to the threaded requests burst."
+                )
                 burst_results, measured_window = phases.phase_burst(
                     session,
                     ep,
@@ -215,8 +248,8 @@ def run(args) -> dict:
             args.sweep_tolerance,
         )
     elif headers_authoritative and not args.skip_sweep:
-        print("\n== PHASE: sustained-interval sweep ==")
-        print(
+        logger.info("\n== PHASE: sustained-interval sweep ==")
+        logger.info(
             "  skipped: authoritative rate-limit headers already give the limit. "
             "Use --force-sweep to run it anyway as an independent check."
         )
@@ -229,23 +262,35 @@ def run(args) -> dict:
     report["requests_used"] = budget.used
 
     _dump(args.output, report)
-    print(f"\nRequests used: {budget.used}/{args.max_requests}")
-    print(f"Full report written to: {args.output}")
+    logger.info("\nRequests used: %s/%s", budget.used, args.max_requests)
+    if args.output != "-":
+        logger.info("Full report written to: %s", args.output)
     return report
 
 
 def _dump(path, report):
-    with open(path, "w") as f:
-        json.dump(report, f, indent=2)
+    if path == "-":
+        json.dump(report, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+    else:
+        with open(path, "w") as f:
+            json.dump(report, f, indent=2)
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
+    setup_logging(level=level, fmt=args.log_format)
     try:
         run(args)
     except KeyboardInterrupt:
-        print("\ninterrupted.", file=sys.stderr)
+        logger.warning("interrupted.")
         sys.exit(130)
+    except Exception:
+        # Route crashes through the logger so --log-format json keeps stderr valid
+        # JSON and the traceback is escaped (PlainFormatter) rather than dumped raw.
+        logger.error("unexpected error", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
