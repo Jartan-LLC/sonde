@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 from .provider import Provider
 
@@ -54,7 +54,7 @@ class Endpoint(ABC):
         """Register endpoint-specific CLI arguments on `parser`."""
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> Endpoint:
+    def from_args(cls, args: argparse.Namespace) -> Self:
         """Build an instance from parsed CLI args."""
         return cls()
 

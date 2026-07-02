@@ -11,7 +11,7 @@ Legacy cookie-auth endpoint. Returns a paginated list of owners of a collectible
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import Any, Self
 
 from ..endpoint import Endpoint, PageResult, RequestSpec, register
 from ..provider import Provider, RobloxProvider
@@ -63,7 +63,7 @@ class AssetOwnersEndpoint(Endpoint):
         p.add_argument("--sort-order", choices=["Asc", "Desc"], default="Asc")
 
     @classmethod
-    def from_args(cls, a: argparse.Namespace) -> AssetOwnersEndpoint:
+    def from_args(cls, a: argparse.Namespace) -> Self:
         return cls(
             asset_id=a.asset_id,
             total_copies=a.total_copies,

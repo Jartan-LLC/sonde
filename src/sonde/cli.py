@@ -144,7 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    ep = endpoint.get(args.endpoint).from_args(args)
+    ep_cls = endpoint.get(args.endpoint)
+    if ep_cls is None:
+        raise SystemExit(f"unknown endpoint: {args.endpoint}")
+    ep = ep_cls.from_args(args)
     provider = ep.provider()
     burst_sizes = [int(x) for x in args.burst_sizes.split(",") if x.strip()]
     sweep_intervals = sorted(

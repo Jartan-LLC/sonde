@@ -162,7 +162,7 @@ def phase_seq(
         "first_429_at_request": first_429,
         "wall_seconds": round(el, 3),
         "seq_req_per_sec": round(ok / el, 2) if el > 0 else None,
-        "avg_latency_ms": round(avg * 1000, 1) if avg else None,
+        "avg_latency_ms": round(avg * 1000, 1) if avg is not None else None,
         "retry_after": last.retry_after if last else None,
     }, cursor_pool
 
@@ -486,7 +486,7 @@ def phase_sweep(
             consecutive = consecutive + 1 if r.rclass == core.RClass.THROTTLED else 0
             if consecutive >= 3:
                 return used, True
-        return used, consecutive > 0
+        return used, consecutive >= 3
 
     for interval in intervals:  # sorted slow -> fast (descending seconds)
         if budget.remaining() < drain_cap + probe_count:
@@ -652,7 +652,7 @@ def phase_estimate(
 
     total_items = endpoint.total_items()
     total_pages = None
-    if page_count and total_items:
+    if page_count is not None and page_count > 0 and total_items is not None:
         total_pages = math.ceil(total_items / page_count)
         logger.info("  total items         : %s", format(total_items, ","))
         logger.info("  items per page      : %s", page_count)

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 import re
-from typing import Any
+from typing import Any, Self
 
 from ..endpoint import Endpoint, PageResult, RequestSpec, register
 from ..provider import GitHubProvider, Provider
@@ -67,7 +67,7 @@ class GitHubStargazersEndpoint(Endpoint):
         p.add_argument("--per-page", type=int, default=100, help="items per page (max 100)")
 
     @classmethod
-    def from_args(cls, a: argparse.Namespace) -> GitHubStargazersEndpoint:
+    def from_args(cls, a: argparse.Namespace) -> Self:
         return cls(owner=a.owner, repo=a.repo, total=a.total, per_page=a.per_page)
 
     def build_request(self, cursor: Any) -> RequestSpec:
