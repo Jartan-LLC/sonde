@@ -8,13 +8,20 @@ The common rate-limit options are shared across every endpoint; each registered
 endpoint contributes its own options as a subcommand.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 import sys
+from typing import Any
 
-from . import core, endpoint, phases
-from . import endpoints  # noqa: F401  (import registers all endpoints)
+from . import (
+    core,
+    endpoint,
+    endpoints,  # noqa: F401  (import registers all endpoints)
+    phases,
+)
 from .logconfig import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -140,8 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def run(args) -> dict:
-    ep = endpoint.get(args.endpoint).from_args(args)
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    ep_cls = endpoint.get(args.endpoint)
+    if ep_cls is None:
+        raise SystemExit(f"unknown endpoint: {args.endpoint}")
+    ep = ep_cls.from_args(args)
     provider = ep.provider()
     burst_sizes = [int(x) for x in args.burst_sizes.split(",") if x.strip()]
     sweep_intervals = sorted(
@@ -268,7 +278,7 @@ def run(args) -> dict:
     return report
 
 
-def _dump(path, report):
+def _dump(path: str, report: dict[str, Any]) -> None:
     if path == "-":
         json.dump(report, sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -277,7 +287,7 @@ def _dump(path, report):
             json.dump(report, f, indent=2)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
     setup_logging(level=level, fmt=args.log_format)

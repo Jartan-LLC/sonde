@@ -5,7 +5,7 @@ import threading
 
 from sonde import core
 from sonde.core import RClass
-from tests.helpers import FakeResp, FakeEndpoint
+from tests.helpers import FakeEndpoint, FakeResp
 
 
 # --------------------------------------------------------------------------- #

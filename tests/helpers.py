@@ -4,8 +4,8 @@ import threading
 import time
 import types
 
-from sonde import endpoint, core
-from sonde.endpoint import RequestSpec, PageResult
+from sonde import core, endpoint
+from sonde.endpoint import PageResult, RequestSpec
 
 # Real captured headers from the two runs in this project.
 RLH_420 = {

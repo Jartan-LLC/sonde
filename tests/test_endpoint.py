@@ -5,7 +5,7 @@ import argparse
 import pytest
 
 from sonde import endpoint
-from sonde.endpoint import Endpoint, RequestSpec, PageResult, register
+from sonde.endpoint import Endpoint, PageResult, RequestSpec, register
 from sonde.endpoints.asset_owners import AssetOwnersEndpoint
 from tests.helpers import FakeResp
 
