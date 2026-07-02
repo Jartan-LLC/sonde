@@ -17,52 +17,72 @@ endpoint. Phases:
 
 import asyncio
 import json
+import logging
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import core
 
+logger = logging.getLogger(__name__)
+
 
 # --------------------------------------------------------------------------- #
 # Sanity / auth + header read
 # --------------------------------------------------------------------------- #
 def phase_sanity(session, endpoint, budget):
-    print("\n== PHASE: sanity / auth ==")
+    logger.info("\n== PHASE: sanity / auth ==")
     r = core.fetch(session, endpoint, None, budget)
     if r.rclass == core.RClass.OK:
-        print(
-            f"  OK  status={r.status}  items_returned={r.count}  latency={r.elapsed * 1000:.0f}ms"
+        logger.info(
+            "  OK  status=%s  items_returned=%s  latency=%.0fms",
+            r.status,
+            r.count,
+            r.elapsed * 1000,
         )
-        print(f"      next_cursor_present={bool(r.next_cursor)}")
+        logger.info("      next_cursor_present=%s", bool(r.next_cursor))
     else:
-        print(
-            f"  status={r.status} ({r.rclass.value})  "
-            f"latency={r.elapsed * 1000:.0f}ms  error={r.error!r}"
+        logger.info(
+            "  status=%s (%s)  latency=%.0fms  error=%r",
+            r.status,
+            r.rclass.value,
+            r.elapsed * 1000,
+            r.error,
         )
         if r.status in (401, 403):
-            print("  -> looks like an auth problem. Set the provider's credential env var.")
+            logger.warning(
+                "  -> looks like an auth problem. Set the provider's credential env var."
+            )
     if r.headers:
-        print(f"  headers: {json.dumps(r.headers)}")
+        logger.debug("  headers: %s", json.dumps(r.headers))
 
     rl = endpoint.provider().parse_rate_limit(r.headers)
     if rl.get("limit") and rl.get("window_s"):
-        print(
-            f"  >> RATE LIMIT (headers, authoritative): {rl['limit']} per {rl['window_s']}s window"
+        logger.info(
+            "  >> RATE LIMIT (headers, authoritative): %s per %ss window",
+            rl["limit"],
+            rl["window_s"],
         )
         if rl.get("remaining") is not None:
-            print(f"     live: remaining={rl['remaining']}  resets_in={rl.get('reset_s')}s")
+            logger.info(
+                "     live: remaining=%s  resets_in=%ss",
+                rl["remaining"],
+                rl.get("reset_s"),
+            )
         extra = [(c, w) for c, w in rl.get("policies", []) if w != rl["window_s"]]
         if extra:
-            print(f"     other quota(s): {extra}")
+            logger.info("     other quota(s): %s", extra)
     elif rl.get("limit"):
-        print(
-            f"  >> rate-limit headers present but no window: limit={rl['limit']}, "
-            f"remaining={rl.get('remaining')}, resets_in={rl.get('reset_s')}s "
-            f"(will fall back to the sweep for the rate estimate)."
+        logger.info(
+            "  >> rate-limit headers present but no window: limit=%s, "
+            "remaining=%s, resets_in=%ss "
+            "(will fall back to the sweep for the rate estimate).",
+            rl["limit"],
+            rl.get("remaining"),
+            rl.get("reset_s"),
         )
     else:
-        print("  >> no usable rate-limit headers (will fall back to empirical sweep).")
+        logger.info("  >> no usable rate-limit headers (will fall back to empirical sweep).")
     return r, rl
 
 
@@ -70,8 +90,8 @@ def phase_sanity(session, endpoint, budget):
 # Sequential sustained probe
 # --------------------------------------------------------------------------- #
 def phase_seq(session, endpoint, budget, cap):
-    print("\n== PHASE: sequential sustained probe ==")
-    print(f"  up to {cap} back-to-back requests until the first 429...")
+    logger.info("\n== PHASE: sequential sustained probe ==")
+    logger.info("  up to %s back-to-back requests until the first 429...", cap)
     cursor = None
     cursor_pool = []
     ok = 0
@@ -95,27 +115,33 @@ def phase_seq(session, endpoint, budget, cap):
             first_429 = i + 1
             el = time.perf_counter() - t_start
             rate = ok / el if el > 0 else float("inf")
-            print(
-                f"  throttled after {ok} successful in {el:.2f}s (~{rate:.1f}/s). "
-                f"Retry-After={r.retry_after}"
+            logger.info(
+                "  throttled after %s successful in %.2fs (~%.1f/s). Retry-After=%s",
+                ok,
+                el,
+                rate,
+                r.retry_after,
             )
             if r.headers:
-                print(f"  throttle headers: {json.dumps(r.headers)}")
+                logger.debug("  throttle headers: %s", json.dumps(r.headers))
             break
         elif r.rclass == core.RClass.BUDGET:
-            print("  budget exhausted before being throttled.")
+            logger.warning("  budget exhausted before being throttled.")
             break
         else:
-            print(f"  unexpected status={r.status} error={r.error!r}; stopping.")
+            logger.warning("  unexpected status=%s error=%r; stopping.", r.status, r.error)
             break
 
     el = time.perf_counter() - t_start
     avg = (sum(latencies) / len(latencies)) if latencies else None
     if first_429 is None and ok:
         rate = ok / el if el > 0 else float("inf")
-        print(
-            f"  no 429 in {ok} requests over {el:.2f}s (~{rate:.1f}/s); "
-            f"ceiling is likely a burst/window cap -> see burst."
+        logger.info(
+            "  no 429 in %s requests over %.2fs (~%.1f/s); "
+            "ceiling is likely a burst/window cap -> see burst.",
+            ok,
+            el,
+            rate,
         )
     return {
         "successful_before_429": ok,
@@ -134,9 +160,11 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
     """Geometric backoff: fine early (to catch a sub-second refill), widening so a
     long window still finishes within max_polls requests. Returns cumulative wait at
     first success, or None."""
-    print(
-        f"    measuring recovery window (adaptive, start≈{start_step}s, "
-        f"≤{max_polls} polls, ≤{max_wait}s)..."
+    logger.info(
+        "    measuring recovery window (adaptive, start≈%ss, ≤%s polls, ≤%ss)...",
+        start_step,
+        max_polls,
+        max_wait,
     )
     waited = 0.0
     step = start_step
@@ -148,15 +176,15 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
         i += 1
         r = core.fetch(session, endpoint, cur, budget)
         if r.rclass == core.RClass.OK:
-            print(f"    recovered after ~{waited:.2f}s")
+            logger.info("    recovered after ~%.2fs", waited)
             return waited
         if r.rclass == core.RClass.BUDGET:
-            print("    budget exhausted during recovery probe.")
+            logger.warning("    budget exhausted during recovery probe.")
             return None
         if waited >= max_wait:
             break
         step *= 1.6
-    print(f"    no recovery within {waited:.1f}s / {max_polls} polls.")
+    logger.info("    no recovery within %.1fs / %s polls.", waited, max_polls)
     return None
 
 
@@ -174,8 +202,8 @@ def phase_burst(
     recovery_max,
     recovery_polls,
 ):
-    print("\n== PHASE: concurrent burst probe [threaded] ==")
-    print("  fires N truly-concurrent requests (pool sized to N); reports launch spread.")
+    logger.info("\n== PHASE: concurrent burst probe [threaded] ==")
+    logger.info("  fires N truly-concurrent requests (pool sized to N); reports launch spread.")
     results = []
     measured_window = None
 
@@ -186,7 +214,11 @@ def phase_burst(
 
     for n in sizes:
         if budget.remaining() < n:
-            print(f"  skipping burst of {n}: only {budget.remaining()} requests left in budget.")
+            logger.warning(
+                "  skipping burst of %s: only %s requests left in budget.",
+                n,
+                budget.remaining(),
+            )
             break
 
         t0 = time.perf_counter()
@@ -211,7 +243,7 @@ def phase_burst(
 
         wait = measured_window or row["max_retry_after"] or cooldown
         if n != sizes[-1] and budget.remaining() > 0:
-            print(f"    cooling down {wait:.0f}s before next burst...")
+            logger.debug("    cooling down %.0fs before next burst...", wait)
             time.sleep(wait)
 
     return results, measured_window
@@ -235,8 +267,8 @@ def phase_burst_async(
 
     if not sizes:
         return [], None
-    print("\n== PHASE: concurrent burst probe [httpx / asyncio] ==")
-    print("  fires N concurrent requests on one event loop; reports launch spread.")
+    logger.info("\n== PHASE: concurrent burst probe [httpx / asyncio] ==")
+    logger.info("  fires N concurrent requests on one event loop; reports launch spread.")
 
     async def afetch(client, cursor):
         if not budget.take():
@@ -256,9 +288,11 @@ def phase_burst_async(
         return core._parse_response(resp, time.perf_counter() - t0, endpoint)
 
     async def recovery(client):
-        print(
-            f"    measuring recovery window (adaptive, start≈{recovery_step}s, "
-            f"≤{recovery_polls} polls, ≤{recovery_max}s)..."
+        logger.info(
+            "    measuring recovery window (adaptive, start≈%ss, ≤%s polls, ≤%ss)...",
+            recovery_step,
+            recovery_polls,
+            recovery_max,
         )
         waited = 0.0
         step = recovery_step
@@ -270,15 +304,15 @@ def phase_burst_async(
             i += 1
             r = await afetch(client, cur)
             if r.rclass == core.RClass.OK:
-                print(f"    recovered after ~{waited:.2f}s")
+                logger.info("    recovered after ~%.2fs", waited)
                 return waited
             if r.rclass == core.RClass.BUDGET:
-                print("    budget exhausted during recovery probe.")
+                logger.warning("    budget exhausted during recovery probe.")
                 return None
             if waited >= recovery_max:
                 break
             step *= 1.6
-        print(f"    no recovery within {waited:.1f}s / {recovery_polls} polls.")
+        logger.info("    no recovery within %.1fs / %s polls.", waited, recovery_polls)
         return None
 
     async def run():
@@ -291,9 +325,10 @@ def phase_burst_async(
         ) as client:
             for n in sizes:
                 if budget.remaining() < n:
-                    print(
-                        f"  skipping burst of {n}: "
-                        f"only {budget.remaining()} requests left in budget."
+                    logger.warning(
+                        "  skipping burst of %s: only %s requests left in budget.",
+                        n,
+                        budget.remaining(),
                     )
                     break
                 launches = []
@@ -317,14 +352,14 @@ def phase_burst_async(
                 if row["throttled_429"] > 0 and mw_before is None and measured_window is None:
                     if row["max_retry_after"]:
                         measured_window = row["max_retry_after"]
-                        print(f"    server-provided window: {measured_window:.0f}s")
+                        logger.info("    server-provided window: %.0fs", measured_window)
                     else:
                         measured_window = await recovery(client)
                 results.append(row)
 
                 wait = measured_window or row["max_retry_after"] or cooldown
                 if n != sizes[-1] and budget.remaining() > 0:
-                    print(f"    cooling down {wait:.0f}s before next burst...")
+                    logger.debug("    cooling down %.0fs before next burst...", wait)
                     await asyncio.sleep(wait)
         return results, measured_window
 
@@ -349,16 +384,21 @@ def _summarise_burst(n, batch, elapsed, spread_ms, measured_window, recovery_cb)
         "launch_spread_ms": round(spread_ms, 1),
         "max_retry_after": max_ra,
     }
-    print(
-        f"  burst={n:<4} 200={ok:<4} 429={c429:<4} other={other:<3} "
-        f"in {elapsed:.2f}s  launch_spread={spread_ms:.0f}ms  "
-        f"retry_after={max_ra if max_ra else 'none'}"
+    logger.info(
+        "  burst=%-4s 200=%-4s 429=%-4s other=%-3s in %.2fs  launch_spread=%.0fms  retry_after=%s",
+        n,
+        ok,
+        c429,
+        other,
+        elapsed,
+        spread_ms,
+        max_ra if max_ra else "none",
     )
 
     if c429 > 0 and measured_window is None and recovery_cb is not None:
         if max_ra:
             measured_window = max_ra
-            print(f"    server-provided window: {measured_window:.0f}s")
+            logger.info("    server-provided window: %.0fs", measured_window)
         else:
             measured_window = recovery_cb()
     return measured_window, row
@@ -377,10 +417,11 @@ def phase_sweep(
     the measurement is invalid, so the sweep aborts with NO floor rather than lie.
 
     Returns (fastest_safe_interval_seconds, rows)."""
-    print("\n== PHASE: sustained-interval sweep ==")
-    print(
-        f"  drains bucket (until empty, cap {drain_cap}) then paces "
-        f"{probe_count} reqs/interval, slow->fast."
+    logger.info("\n== PHASE: sustained-interval sweep ==")
+    logger.info(
+        "  drains bucket (until empty, cap %s) then paces %s reqs/interval, slow->fast.",
+        drain_cap,
+        probe_count,
     )
 
     rows = []
@@ -409,9 +450,11 @@ def phase_sweep(
 
     for interval in intervals:  # sorted slow -> fast (descending seconds)
         if budget.remaining() < drain_cap + probe_count:
-            print(
-                f"  stopping sweep: budget ({budget.remaining()}) too low for "
-                f"drain+probe ({drain_cap}+{probe_count})."
+            logger.warning(
+                "  stopping sweep: budget (%s) too low for drain+probe (%s+%s).",
+                budget.remaining(),
+                drain_cap,
+                probe_count,
             )
             break
 
@@ -419,11 +462,13 @@ def phase_sweep(
         # Drain is interval-independent: if it fails once it fails for all. Abort with
         # no floor rather than report a fake-fast one from coasting on spare quota.
         if not emptied:
-            print(
-                f"  [!] drain fired {drained_reqs} requests but never emptied the bucket "
-                f"(--sweep-drain={drain_cap} < the limit). The sweep can't measure a floor "
-                f"from empty here, so it won't report one. Trust the rate-limit headers, "
-                f"or raise --sweep-drain above the limit (costly)."
+            logger.warning(
+                "  [!] drain fired %s requests but never emptied the bucket "
+                "(--sweep-drain=%s < the limit). The sweep can't measure a floor "
+                "from empty here, so it won't report one. Trust the rate-limit headers, "
+                "or raise --sweep-drain above the limit (costly).",
+                drained_reqs,
+                drain_cap,
             )
             return None, rows
 
@@ -461,24 +506,32 @@ def phase_sweep(
             }
         )
         status = "clean" if clean else f"THROTTLED ({throttled}/{sent}={frac:.0%})"
-        print(
-            f"  interval={interval:<6}s  [drained in {drained_reqs}]  "
-            f"sent={sent:<3} 429={throttled:<3} ({frac:.0%}) eff={eff_rate:4.2f}/s  -> {status}"
+        logger.info(
+            "  interval=%-6ss  [drained in %s]  sent=%-3s 429=%-3s (%s) eff=%4.2f/s  -> %s",
+            interval,
+            drained_reqs,
+            sent,
+            throttled,
+            format(frac, ".0%"),
+            eff_rate,
+            status,
         )
 
         if clean:
             fastest_safe = interval
         else:
-            print(
-                f"  => floor found: {interval}s throttles from empty; "
-                f"fastest sustainable interval = {fastest_safe}s"
+            logger.info(
+                "  => floor found: %ss throttles from empty; fastest sustainable interval = %ss",
+                interval,
+                fastest_safe,
             )
             break
 
     if fastest_safe is not None and rows and rows[-1]["clean"]:
-        print(
-            f"  => reached fastest tested interval ({fastest_safe}s) still clean; "
-            f"true floor may be lower — add faster values to --sweep-intervals."
+        logger.info(
+            "  => reached fastest tested interval (%ss) still clean; "
+            "true floor may be lower — add faster values to --sweep-intervals.",
+            fastest_safe,
         )
     return fastest_safe, rows
 
@@ -489,7 +542,7 @@ def phase_sweep(
 def phase_estimate(
     endpoint, page_count, seq_summary, burst_results, measured_window, swept_interval, margin, rl
 ):
-    print("\n== PHASE: rate + wall-clock estimate ==")
+    logger.info("\n== PHASE: rate + wall-clock estimate ==")
 
     safe_rate_per_min = None
     basis = None
@@ -507,15 +560,19 @@ def phase_estimate(
             f"AUTHORITATIVE headers: {header_limit}/{header_window}s"
             f" ({max_per_min:.0f}/min ceiling)"
         )
-        print(
-            f"  RATE LIMIT (headers): {header_limit} per {header_window}s = "
-            f"{max_per_min:.0f} req/min ceiling"
+        logger.info(
+            "  RATE LIMIT (headers): %s per %ss = %.0f req/min ceiling",
+            header_limit,
+            header_window,
+            max_per_min,
         )
-        print(
-            f"    even-pace interval : {even:.3f}s "
-            f"(recommend {recommended_interval:.3f}s with {round(margin * 100)}% margin)"
+        logger.info(
+            "    even-pace interval : %.3fs (recommend %.3fs with %s%% margin)",
+            even,
+            recommended_interval,
+            round(margin * 100),
         )
-        print(
+        logger.info(
             "    practical limiter  : use the live remaining/reset counters "
             "(reset_s is normalised seconds-until); when remaining hits 0, wait reset_s "
             "seconds. Retry-After is a backoff hint, not the window length."
@@ -550,26 +607,29 @@ def phase_estimate(
     total_pages = None
     if page_count and total_items:
         total_pages = math.ceil(total_items / page_count)
-        print(f"  total items         : {total_items:,}")
-        print(f"  items per page      : {page_count}")
-        print(f"  => total requests   : {total_pages:,}")
+        logger.info("  total items         : %s", format(total_items, ","))
+        logger.info("  items per page      : %s", page_count)
+        logger.info("  => total requests   : %s", format(total_pages, ","))
     else:
-        print("  total items unknown (no endpoint total / no page count) -> reporting rate only.")
+        logger.info(
+            "  total items unknown (no endpoint total / no page count) -> reporting rate only."
+        )
 
     if safe_rate_per_min:
         if recommended_interval:
-            print(
-                f"  recommended interval: {recommended_interval:.3f}s  "
-                f"(~{safe_rate_per_min:.0f} req/min)"
+            logger.info(
+                "  recommended interval: %.3fs  (~%.0f req/min)",
+                recommended_interval,
+                safe_rate_per_min,
             )
         else:
-            print(f"  safe rate estimate  : ~{safe_rate_per_min:.0f} req/min")
-        print(f"  basis               : {basis}")
+            logger.info("  safe rate estimate  : ~%.0f req/min", safe_rate_per_min)
+        logger.info("  basis               : %s", basis)
         if total_pages:
             minutes = total_pages / safe_rate_per_min
-            print(f"  => full scrape time : ~{minutes:.0f} min  (~{minutes / 60:.1f} h)")
+            logger.info("  => full scrape time : ~%.0f min  (~%.1f h)", minutes, minutes / 60)
     else:
-        print(
+        logger.info(
             "  safe rate estimate  : insufficient data (nothing throttled) — re-run "
             "with faster --sweep-intervals or larger --burst-sizes."
         )
