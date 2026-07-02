@@ -7,7 +7,7 @@ endpoint. Phases:
 
   sanity     one request; read auth + x-ratelimit headers
   sequential back-to-back requests until the first 429
-  burst      N concurrent requests (threaded, or async httpx via --use-httpx)
+  burst      N concurrent requests (async httpx on one event loop)
   recovery   after a 429, measure how long until requests succeed again
   sweep      find the fastest sustained interval that stays 429-free (fallback)
   estimate   turn the measurements into a safe rate + wall-clock estimate
@@ -22,10 +22,10 @@ import json
 import logging
 import math
 import time
-from collections.abc import Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Generator
 from typing import Any
 
+import httpx
 import requests
 
 from . import core
@@ -168,7 +168,7 @@ def phase_seq(
 
 
 # --------------------------------------------------------------------------- #
-# Recovery probe — shared logic + sync wrapper
+# Recovery probe — shared backoff generator (async burst path measures inline)
 # --------------------------------------------------------------------------- #
 def _recovery_steps(
     start_step: float, max_wait: float, max_polls: int, cursor_pool: list[Any]
@@ -188,103 +188,10 @@ def _recovery_steps(
         step *= 1.6
 
 
-def measure_recovery(
-    session: requests.Session,
-    endpoint: Endpoint,
-    budget: Budget,
-    cursor_pool: list[Any],
-    start_step: float,
-    max_wait: float,
-    max_polls: int,
-) -> float | None:
-    """Geometric backoff: fine early (to catch a sub-second refill), widening so a
-    long window still finishes within max_polls requests. Returns cumulative wait at
-    first success, or None."""
-    logger.info(
-        "    measuring recovery window (adaptive, start≈%ss, ≤%s polls, ≤%ss)...",
-        start_step,
-        max_polls,
-        max_wait,
-    )
-    waited = 0.0
-    for step, cur, waited in _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
-        time.sleep(step)
-        r = core.fetch(session, endpoint, cur, budget)
-        if r.rclass == core.RClass.OK:
-            logger.info("    recovered after ~%.2fs", waited)
-            return waited
-        if r.rclass == core.RClass.BUDGET:
-            logger.warning("    budget exhausted during recovery probe.")
-            return None
-    logger.info("    no recovery within %.1fs / %s polls.", waited, max_polls)
-    return None
-
-
 # --------------------------------------------------------------------------- #
-# Burst probe (threaded)
+# Burst probe (async httpx / asyncio)
 # --------------------------------------------------------------------------- #
 def phase_burst(
-    session: requests.Session,
-    endpoint: Endpoint,
-    budget: Budget,
-    sizes: list[int],
-    cooldown: float,
-    cursor_pool: list[Any],
-    recovery_step: float,
-    recovery_max: float,
-    recovery_polls: int,
-) -> tuple[list[dict[str, Any]], float | None]:
-    logger.info("\n== PHASE: concurrent burst probe [threaded] ==")
-    logger.info("  fires N truly-concurrent requests (pool sized to N); reports launch spread.")
-    results = []
-    measured_window = None
-
-    def one(idx):
-        cur = cursor_pool[idx % len(cursor_pool)] if cursor_pool else None
-        t_launch = time.perf_counter()
-        return t_launch, core.fetch(session, endpoint, cur, budget)
-
-    for n in sizes:
-        if budget.remaining() < n:
-            logger.warning(
-                "  skipping burst of %s: only %s requests left in budget.",
-                n,
-                budget.remaining(),
-            )
-            break
-
-        t0 = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=n) as pool:
-            pairs = list(pool.map(one, range(n)))
-        elapsed = time.perf_counter() - t0
-
-        launches = [t for t, _ in pairs]
-        batch = [r for _, r in pairs]
-        spread_ms = (max(launches) - min(launches)) * 1000 if launches else 0.0
-        measured_window, row = _summarise_burst(
-            n,
-            batch,
-            elapsed,
-            spread_ms,
-            measured_window,
-            lambda: measure_recovery(
-                session, endpoint, budget, cursor_pool, recovery_step, recovery_max, recovery_polls
-            ),
-        )
-        results.append(row)
-
-        wait = measured_window or row["max_retry_after"] or cooldown
-        if n != sizes[-1] and budget.remaining() > 0:
-            logger.debug("    cooling down %.0fs before next burst...", wait)
-            time.sleep(wait)
-
-    return results, measured_window
-
-
-# --------------------------------------------------------------------------- #
-# Burst probe (async httpx). Same behaviour; httpx imported lazily.
-# --------------------------------------------------------------------------- #
-def phase_burst_async(
     headers: dict[str, str],
     endpoint: Endpoint,
     budget: Budget,
@@ -295,8 +202,6 @@ def phase_burst_async(
     recovery_max: float,
     recovery_polls: int,
 ) -> tuple[list[dict[str, Any]], float | None]:
-    import httpx  # lazy: only needed for --use-httpx
-
     if not sizes:
         return [], None
     logger.info("\n== PHASE: concurrent burst probe [httpx / asyncio] ==")
@@ -370,12 +275,10 @@ def phase_burst_async(
                 idx_base += n
                 spread_ms = (max(launches) - min(launches)) * 1000 if launches else 0.0
 
-                # recovery is async here, so summarise inline rather than via callback
-                mw_before = measured_window
-                measured_window, row = _summarise_burst(
-                    n, batch, elapsed, spread_ms, measured_window, recovery_cb=None
-                )
-                if row["throttled_429"] > 0 and mw_before is None and measured_window is None:
+                row = _summarise_burst(n, batch, elapsed, spread_ms)
+                # recovery is async here, so measure the window inline on the first
+                # throttled burst rather than inside the bookkeeping helper.
+                if row["throttled_429"] > 0 and measured_window is None:
                     if row["max_retry_after"]:
                         measured_window = row["max_retry_after"]
                         logger.info("    server-provided window: %.0fs", measured_window)
@@ -397,11 +300,9 @@ def _summarise_burst(
     batch: list[Result],
     elapsed: float,
     spread_ms: float,
-    measured_window: float | None,
-    recovery_cb: Callable[[], float | None] | None,
-) -> tuple[float | None, dict[str, Any]]:
-    """Shared burst bookkeeping for the threaded and async paths. If recovery_cb is
-    given (sync path) it's called to measure the window on the first throttled burst."""
+) -> dict[str, Any]:
+    """Count one burst's outcomes and build its report row. Window/recovery decisions
+    live at the call site (the async burst measures recovery inline)."""
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
     c429 = sum(1 for r in batch if r.rclass == core.RClass.THROTTLED)
     other = n - ok - c429
@@ -427,14 +328,7 @@ def _summarise_burst(
         spread_ms,
         max_ra if max_ra else "none",
     )
-
-    if c429 > 0 and measured_window is None and recovery_cb is not None:
-        if max_ra:
-            measured_window = max_ra
-            logger.info("    server-provided window: %.0fs", measured_window)
-        else:
-            measured_window = recovery_cb()
-    return measured_window, row
+    return row
 
 
 # --------------------------------------------------------------------------- #

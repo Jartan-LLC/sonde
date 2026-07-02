@@ -2,7 +2,8 @@
 
 import threading
 import time
-import types
+
+import httpx
 
 from sonde import core, endpoint
 from sonde.endpoint import PageResult, RequestSpec
@@ -118,34 +119,15 @@ class FakeEndpoint(endpoint.Endpoint):
         return self._total
 
 
-def make_fake_httpx(decider, headers=None):
-    """Stand-in `httpx` module whose AsyncClient.request returns 200/429 based on
-    `decider()` (a zero-arg callable returning bool)."""
-    hx = types.ModuleType("httpx")
+def make_burst_handler(decider, retry_after=None):
+    """Build an `httpx.MockTransport` handler for the async burst phase. Each request
+    returns 200 or 429 per `decider()` (a zero-arg callable -> bool); 429s carry a
+    `Retry-After` header when `retry_after` is given."""
 
-    class RequestError(Exception):
-        pass
+    def handler(request):
+        if decider():
+            return httpx.Response(200, json={"data": [0] * 100, "nextPageCursor": "c"})
+        headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
+        return httpx.Response(429, headers=headers)
 
-    class Limits:
-        def __init__(self, **kw):
-            self.kw = kw
-
-    class AsyncClient:
-        def __init__(self, **kw):
-            self.kw = kw
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def request(self, method, url, params=None, json=None):
-            ok = decider()
-            body = {"data": [0] * 100, "nextPageCursor": "c"} if ok else None
-            return FakeResp(200 if ok else 429, headers=headers, body=body)
-
-    hx.RequestError = RequestError
-    hx.Limits = Limits
-    hx.AsyncClient = AsyncClient
-    return hx
+    return handler
