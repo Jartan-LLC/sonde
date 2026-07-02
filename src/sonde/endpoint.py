@@ -25,6 +25,8 @@ from typing import Any, Self
 
 from .provider import Provider
 
+__all__ = ["Endpoint", "RequestSpec", "PageResult", "register", "get", "all_endpoints"]
+
 
 @dataclass
 class RequestSpec:

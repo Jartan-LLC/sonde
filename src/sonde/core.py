@@ -24,6 +24,17 @@ from . import __version__
 if TYPE_CHECKING:
     from .endpoint import Endpoint
 
+__all__ = [
+    "RClass",
+    "Budget",
+    "Result",
+    "build_session",
+    "fetch",
+    "default_rclass",
+    "interesting_headers",
+    "BASE_HEADERS",
+]
+
 BASE_HEADERS = {
     "Accept": "application/json",
     "User-Agent": f"sonde/{__version__} (one-time diagnostic)",
@@ -78,13 +89,13 @@ class Budget:
 # --------------------------------------------------------------------------- #
 # Session
 # --------------------------------------------------------------------------- #
-def build_session(max_conns: int = 10, headers: dict[str, str] | None = None) -> requests.Session:
-    """Session with a pool sized to the largest burst and a no-write cookie jar
-    (auth rides on headers, so the shared jar is never mutated -> thread-safe)."""
+def build_session(headers: dict[str, str] | None = None) -> requests.Session:
+    """Session for the serial phases; auth rides on headers so the no-write cookie
+    jar is never mutated. The burst phase builds its own httpx client."""
     s = requests.Session()
     s.headers.update(headers or dict(BASE_HEADERS))
     s.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
-    adapter = HTTPAdapter(pool_connections=4, pool_maxsize=max(max_conns, 10), max_retries=0)
+    adapter = HTTPAdapter(pool_connections=4, pool_maxsize=10, max_retries=0)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     return s

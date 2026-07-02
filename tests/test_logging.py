@@ -6,7 +6,13 @@ import sys
 
 import pytest
 
-from sonde.logconfig import JsonFormatter, PlainFormatter, setup_logging
+from sonde import logconfig
+from sonde.logconfig import (
+    JsonFormatter,
+    PlainFormatter,
+    register_log_secrets,
+    setup_logging,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -188,3 +194,51 @@ class TestSetupLogging:
     def test_level_propagates(self):
         setup_logging(level=logging.DEBUG)
         assert logging.getLogger().level == logging.DEBUG
+
+    def test_clears_registered_secrets(self):
+        register_log_secrets(["leftover"])
+        setup_logging()
+        assert "leftover" not in logconfig._SECRETS
+
+
+# --------------------------------------------------------------------------- #
+# Secret redaction
+# --------------------------------------------------------------------------- #
+class TestSecretRedaction:
+    def setup_method(self):
+        logconfig._SECRETS.clear()
+
+    def teardown_method(self):
+        logconfig._SECRETS.clear()
+
+    def test_plain_redacts_registered_secret(self):
+        register_log_secrets([".ROBLOSECURITY=topsecret"])
+        result = PlainFormatter().format(_make_record("body: .ROBLOSECURITY=topsecret echoed"))
+        assert "topsecret" not in result
+        assert "***" in result
+
+    def test_json_redacts_registered_secret(self):
+        register_log_secrets(["Bearer ghp_tok"])
+        result = JsonFormatter().format(_make_record("auth Bearer ghp_tok leaked"))
+        assert "ghp_tok" not in result
+        assert json.loads(result)["message"] == "auth *** leaked"
+
+    def test_redacts_secret_from_percent_args(self):
+        """The real leak path (phases logs `error=%r`) puts the echoed secret in
+        %-args, so scrubbing must run post-interpolation."""
+        register_log_secrets(["Bearer ghp_tok"])
+        record = logging.LogRecord(
+            name="sonde.test",
+            level=logging.WARNING,
+            pathname="t.py",
+            lineno=1,
+            msg="error=%r",
+            args=("Bearer ghp_tok",),
+            exc_info=None,
+        )
+        assert "ghp_tok" not in PlainFormatter().format(record)
+        assert "ghp_tok" not in JsonFormatter().format(record)
+
+    def test_empty_secret_is_ignored(self):
+        register_log_secrets(["", "real"])
+        assert logconfig._SECRETS == ["real"]

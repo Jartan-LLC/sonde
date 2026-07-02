@@ -129,6 +129,35 @@ def test_output_default():
     assert args.output == "sonde_report.json"
 
 
+def test_burst_sizes_parses_to_list():
+    args = build_parser().parse_args(
+        ["asset-owners", "--asset-id", "1", "--burst-sizes", "5,10,15"]
+    )
+    assert args.burst_sizes == [5, 10, 15]
+
+
+def test_bad_burst_sizes_exits_2():
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["asset-owners", "--asset-id", "1", "--burst-sizes", "10,abc"])
+    assert exc.value.code == 2  # argparse usage error
+
+
+def test_bad_sweep_intervals_exits_2():
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["asset-owners", "--asset-id", "1", "--sweep-intervals", "1,x"])
+    assert exc.value.code == 2
+
+
+def test_unwritable_output_fails_fast(tmp_path, monkeypatch):
+    """A bad --output path aborts with exit 2 before probing, not after."""
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    bad = tmp_path / "no_such_dir" / "report.json"
+    args = build_parser().parse_args(["asset-owners", "--asset-id", "1", "--output", str(bad)])
+    with pytest.raises(SystemExit) as exc:
+        cli.run(args)
+    assert exc.value.code == 2
+
+
 def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root_logger):
     """--output - writes valid JSON to stdout, no file created. -q suppresses INFO."""
     monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
@@ -180,7 +209,9 @@ def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, restore_root_logge
         "-",
         "-q",
     ]
-    cli.main(argv)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2  # non-OK sanity aborts with a non-zero exit
     captured = capfd.readouterr()
     report = json.loads(captured.out)
     assert report["sanity"]["status"] == 403
@@ -311,7 +342,9 @@ def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, restore_root_l
         "--log-format",
         "json",
     ]
-    cli.main(argv)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
     _assert_all_stderr_json(capfd.readouterr())
 
 

@@ -8,6 +8,8 @@ Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Pro
 
 ## Install
 
+Requires Python 3.12+.
+
 ```bash
 pip install sonde
 ```
@@ -74,6 +76,7 @@ The estimate phase uses a priority ladder to determine the safe rate:
 2. **Swept floor** -- If the sweep found a fastest sustainable interval, use that.
 3. **Token-bucket inference** -- If burst results show a clean burst size and a measured recovery window, infer the bucket rate.
 4. **Sequential fallback** -- Use the observed sequential throughput before the first 429.
+5. **No-throttle fallback** -- If nothing ever throttled, fall back to half the measured sequential throughput.
 
 The final recommended interval applies a safety margin (default 80%, configurable with `--margin`), meaning the recommended pace is ~25% slower than the measured ceiling.
 
@@ -159,6 +162,8 @@ Common options shared by all endpoints:
 | `--log-format` | `plain` | Log line format: `plain` (message-only) or `json` (structured) |
 
 `-v` and `-q` are mutually exclusive. Logs always go to stderr; the report goes to `--output`.
+
+**Exit codes:** `0` success, `2` precondition failure (bad arguments, unwritable `--output`, or the endpoint returned no usable response), `1` unexpected crash, `130` interrupted.
 
 ### Piping and machine-readable output
 

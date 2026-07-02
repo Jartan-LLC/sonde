@@ -22,9 +22,34 @@ from . import (
     endpoints,  # noqa: F401  (import registers all endpoints)
     phases,
 )
-from .logconfig import setup_logging
+from .logconfig import register_log_secrets, setup_logging
 
 logger = logging.getLogger(__name__)
+
+# Header names whose values are credentials and must be kept out of logs.
+_SECRET_HEADER_KEYS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key"})
+
+
+def _int_list(raw: str) -> list[int]:
+    """argparse type for a comma-separated list of ints (clean exit-2 on bad input)."""
+    try:
+        vals = [int(x) for x in raw.split(",") if x.strip()]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"comma-separated integers required: {e}")
+    if not vals:
+        raise argparse.ArgumentTypeError("at least one value required")
+    return vals
+
+
+def _float_list(raw: str) -> list[float]:
+    """argparse type for a comma-separated list of floats (clean exit-2 on bad input)."""
+    try:
+        vals = [float(x) for x in raw.split(",") if x.strip()]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"comma-separated numbers required: {e}")
+    if not vals:
+        raise argparse.ArgumentTypeError("at least one value required")
+    return vals
 
 
 def build_common_parser() -> argparse.ArgumentParser:
@@ -39,7 +64,10 @@ def build_common_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--skip-burst", action="store_true")
     g.add_argument(
-        "--burst-sizes", default="10,20,40,80", help="comma list of concurrent burst sizes"
+        "--burst-sizes",
+        type=_int_list,
+        default=[10, 20, 40, 80],
+        help="comma list of concurrent burst sizes (default: 10,20,40,80)",
     )
     g.add_argument(
         "--burst-cooldown",
@@ -74,9 +102,11 @@ def build_common_parser() -> argparse.ArgumentParser:
     )
     g.add_argument(
         "--sweep-intervals",
-        default="8,5,3,2,1.2,0.6,0.3,0.15",
-        help="inter-request intervals (s) to test, SLOW->FAST. Wide so it can "
-        "bracket slow limits; only used as a fallback when headers are missing.",
+        type=_float_list,
+        default=[8, 5, 3, 2, 1.2, 0.6, 0.3, 0.15],
+        help="inter-request intervals (s) to test, SLOW->FAST (default: "
+        "8,5,3,2,1.2,0.6,0.3,0.15). Wide so it can bracket slow limits; only "
+        "used as a fallback when headers are missing.",
     )
     g.add_argument(
         "--sweep-count", type=int, default=20, help="paced requests per interval after draining"
@@ -145,17 +175,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     ep_cls = endpoint.get(args.endpoint)
     if ep_cls is None:
         raise SystemExit(f"unknown endpoint: {args.endpoint}")
+    _preflight_output(args.output)
     ep = ep_cls.from_args(args)
     provider = ep.provider()
-    burst_sizes = [int(x) for x in args.burst_sizes.split(",") if x.strip()]
-    sweep_intervals = sorted(
-        [float(x) for x in args.sweep_intervals.split(",") if x.strip()], reverse=True
-    )
+    burst_sizes = args.burst_sizes
+    sweep_intervals = sorted(args.sweep_intervals, reverse=True)
     budget = core.Budget(max_requests=args.max_requests)
-    max_conns = max(burst_sizes, default=10)
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
-    session = core.build_session(max_conns=max_conns, headers=headers)
+    # Keep our own credentials out of logs if the target echoes them back.
+    register_log_secrets(v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS)
+    session = core.build_session(headers=headers)
 
     logger.info("Endpoint : %s", ep.name)
     logger.info("Provider : %s", provider.name)
@@ -238,6 +268,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     return report
 
 
+def _preflight_output(path: str) -> None:
+    """Fail fast (exit 2) on an unwritable --output path before probing."""
+    if path == "-":
+        return
+    try:
+        with open(path, "w"):
+            pass
+    except OSError as e:
+        logger.error("cannot write --output %r: %s", path, e)
+        raise SystemExit(2)
+
+
 def _dump(path: str, report: dict[str, Any]) -> None:
     if path == "-":
         json.dump(report, sys.stdout, indent=2)
@@ -247,12 +289,21 @@ def _dump(path: str, report: dict[str, Any]) -> None:
             json.dump(report, f, indent=2)
 
 
+def _aborted(report: dict[str, Any]) -> bool:
+    """True when the probe bailed because the endpoint returned no usable response
+    (non-OK sanity). main() maps this to a non-zero exit so CI can detect it."""
+    sanity = report.get("sanity")
+    return bool(sanity) and sanity.get("rclass") != core.RClass.OK.value
+
+
 def main(argv: list[str] | None = None) -> None:
+    """Exit codes: 0 success, 2 precondition failure (bad args / unwritable output /
+    endpoint returned no usable response), 1 unexpected crash, 130 interrupted."""
     args = build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
     setup_logging(level=level, fmt=args.log_format)
     try:
-        run(args)
+        report = run(args)
     except KeyboardInterrupt:
         logger.warning("interrupted.")
         sys.exit(130)
@@ -261,6 +312,8 @@ def main(argv: list[str] | None = None) -> None:
         # JSON and the traceback is escaped (PlainFormatter) rather than dumped raw.
         logger.error("unexpected error", exc_info=True)
         sys.exit(1)
+    if _aborted(report):
+        sys.exit(2)
 
 
 if __name__ == "__main__":
