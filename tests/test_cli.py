@@ -1,6 +1,7 @@
 """Tests for the CLI parser and the run() orchestration end-to-end (mocked fetch)."""
 
 import json
+import logging
 
 import pytest
 
@@ -103,3 +104,39 @@ def test_run_aborts_on_non_200(tmp_path, monkeypatch):
     report = cli.run(args)
     assert report["sanity"]["status"] == 403
     assert "estimate" not in report  # bailed before estimating
+
+
+# --------------------------------------------------------------------------- #
+# --json flag
+# --------------------------------------------------------------------------- #
+def test_run_json_output_to_stdout(tmp_path, monkeypatch, capsys):
+    """--json suppresses file output and writes valid JSON to stdout."""
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    # Reset logging so basicConfig in main() can reconfigure it.
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    out = tmp_path / "report.json"
+    argv = [
+        "asset-owners",
+        "--asset-id",
+        "20573078",
+        "--total-copies",
+        "1470000",
+        "--seq-cap",
+        "15",
+        "--burst-sizes",
+        "10,20",
+        "--burst-cooldown",
+        "0",
+        "--output",
+        str(out),
+        "--json",
+    ]
+    cli.main(argv)
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert report["endpoint"] == "asset-owners"
+    assert "estimate" in report
+    # --json should suppress file output
+    assert not out.exists()

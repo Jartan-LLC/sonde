@@ -10,10 +10,13 @@ endpoint contributes its own options as a subcommand.
 
 import argparse
 import json
+import logging
 import sys
 
 from . import core, endpoint, phases
 from . import endpoints  # noqa: F401  (import registers all endpoints)
+
+logger = logging.getLogger(__name__)
 
 
 def build_common_parser() -> argparse.ArgumentParser:
@@ -96,6 +99,26 @@ def build_common_parser() -> argparse.ArgumentParser:
         help="safety margin: recommended interval = floor / margin (0.8 => 25%% slower)",
     )
     g.add_argument("--output", default="sonde_report.json")
+
+    og = c.add_argument_group("output mode")
+    og.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="show per-request detail (sets log level to DEBUG)",
+    )
+    og.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="only show warnings and errors (sets log level to WARNING)",
+    )
+    og.add_argument(
+        "--json",
+        action="store_true",
+        help="suppress log output and write the JSON report to stdout instead of a file "
+        "(--output is ignored)",
+    )
     return c
 
 
@@ -125,10 +148,12 @@ def run(args) -> dict:
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
     session = core.build_session(max_conns=max_conns, headers=headers)
 
-    print(f"Endpoint : {ep.name}")
-    print(f"Provider : {provider.name}")
-    print(f"Auth     : {'credentials set' if provider.auth_headers() else 'none (anonymous)'}")
-    print(f"Budget   : {args.max_requests} requests total")
+    logger.info(f"Endpoint : {ep.name}")
+    logger.info(f"Provider : {provider.name}")
+    logger.info(
+        f"Auth     : {'credentials set' if provider.auth_headers() else 'none (anonymous)'}"
+    )
+    logger.info(f"Budget   : {args.max_requests} requests total")
 
     report = {"endpoint": ep.name, "provider": provider.name}
 
@@ -141,11 +166,12 @@ def run(args) -> dict:
     }
     report["ratelimit_headers"] = rl
     if sanity.rclass != core.RClass.OK:
-        print(
+        logger.warning(
             "\nAborting: no usable success response from the endpoint. "
             "Fix auth / arguments and re-run."
         )
-        _dump(args.output, report)
+        if not getattr(args, "json", False):
+            _dump(args.output, report)
         return report
     page_count = sanity.count  # items per successful page, for the estimate
 
@@ -169,8 +195,10 @@ def run(args) -> dict:
                 )
                 burst_impl = "httpx"
             except ImportError:
-                print("\n[!] --use-httpx set but httpx isn't installed (pip install httpx).")
-                print("    Falling back to the threaded requests burst.")
+                logger.warning(
+                    "\n[!] --use-httpx set but httpx isn't installed (pip install httpx)."
+                )
+                logger.warning("    Falling back to the threaded requests burst.")
                 burst_results, measured_window = phases.phase_burst(
                     session,
                     ep,
@@ -215,8 +243,8 @@ def run(args) -> dict:
             args.sweep_tolerance,
         )
     elif headers_authoritative and not args.skip_sweep:
-        print("\n== PHASE: sustained-interval sweep ==")
-        print(
+        logger.info("\n== PHASE: sustained-interval sweep ==")
+        logger.info(
             "  skipped: authoritative rate-limit headers already give the limit. "
             "Use --force-sweep to run it anyway as an independent check."
         )
@@ -228,9 +256,11 @@ def run(args) -> dict:
     )
     report["requests_used"] = budget.used
 
-    _dump(args.output, report)
-    print(f"\nRequests used: {budget.used}/{args.max_requests}")
-    print(f"Full report written to: {args.output}")
+    if not getattr(args, "json", False):
+        _dump(args.output, report)
+    logger.info(f"\nRequests used: {budget.used}/{args.max_requests}")
+    if not getattr(args, "json", False):
+        logger.info(f"Full report written to: {args.output}")
     return report
 
 
@@ -241,11 +271,28 @@ def _dump(path, report):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+
+    # Configure logging based on output mode flags.
+    if getattr(args, "json", False):
+        # --json: suppress all log output; report goes to stdout.
+        logging.basicConfig(handlers=[logging.NullHandler()])
+    else:
+        level = logging.INFO
+        if getattr(args, "verbose", False):
+            level = logging.DEBUG
+        elif getattr(args, "quiet", False):
+            level = logging.WARNING
+        logging.basicConfig(format="%(message)s", level=level)
+
     try:
-        run(args)
+        report = run(args)
     except KeyboardInterrupt:
         print("\ninterrupted.", file=sys.stderr)
         sys.exit(130)
+
+    if getattr(args, "json", False):
+        json.dump(report, sys.stdout, indent=2)
+        sys.stdout.write("\n")
 
 
 if __name__ == "__main__":
