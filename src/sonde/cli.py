@@ -201,8 +201,8 @@ def run(args) -> dict:
                 burst_impl = "httpx"
             except ImportError:
                 logger.warning(
-                    "\n[!] --use-httpx set but httpx isn't installed (pip install httpx)."
-                    "  Falling back to the threaded requests burst."
+                    "\n[!] --use-httpx set but httpx isn't installed "
+                    "(pip install httpx); falling back to the threaded requests burst."
                 )
                 burst_results, measured_window = phases.phase_burst(
                     session,
@@ -286,6 +286,11 @@ def main(argv=None):
     except KeyboardInterrupt:
         logger.warning("interrupted.")
         sys.exit(130)
+    except Exception:
+        # Route crashes through the logger so --log-format json keeps stderr valid
+        # JSON and the traceback is escaped (PlainFormatter) rather than dumped raw.
+        logger.error("unexpected error", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

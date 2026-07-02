@@ -43,7 +43,9 @@ def phase_sanity(session, endpoint, budget):
         )
         logger.info("      next_cursor_present=%s", bool(r.next_cursor))
     else:
-        logger.info(
+        # WARNING (not INFO) so `-q` users still see the triggering status/error
+        # alongside the abort message this non-OK path leads to.
+        logger.warning(
             "  status=%s (%s)  latency=%.0fms  error=%r",
             r.status,
             r.rclass.value,
@@ -54,7 +56,7 @@ def phase_sanity(session, endpoint, budget):
             logger.warning(
                 "  -> looks like an auth problem. Set the provider's credential env var."
             )
-    if r.headers:
+    if r.headers and logger.isEnabledFor(logging.DEBUG):
         logger.debug("  headers: %s", json.dumps(r.headers))
 
     rl = endpoint.provider().parse_rate_limit(r.headers)
@@ -123,7 +125,7 @@ def phase_seq(session, endpoint, budget, cap):
                 rate,
                 r.retry_after,
             )
-            if r.headers:
+            if r.headers and logger.isEnabledFor(logging.DEBUG):
                 logger.debug("  throttle headers: %s", json.dumps(r.headers))
             break
         elif r.rclass == core.RClass.BUDGET:

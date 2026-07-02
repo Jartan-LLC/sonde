@@ -86,6 +86,29 @@ class TestPlainFormatter:
         record = _make_record(msg)
         assert self.fmt.format(record) == msg
 
+    def test_escapes_c1_control_chars(self):
+        record = _make_record("hi\x9b31mred\x85next")
+        result = self.fmt.format(record)
+        assert "\x9b" not in result
+        assert "\x85" not in result
+        assert "\\x9b" in result
+        assert "\\x85" in result
+
+    def test_escapes_controls_in_exception_but_keeps_newlines(self):
+        record = _make_record("boom")
+        try:
+            raise ValueError("evil\x1b[31m\x9binjected")
+        except ValueError:
+            record.exc_info = sys.exc_info()
+        result = self.fmt.format(record)
+        # embedded ESC (C0) and CSI (C1) neutralised in the traceback text...
+        assert "\x1b" not in result
+        assert "\x9b" not in result
+        assert "\\x1b" in result
+        assert "\\x9b" in result
+        # ...but the traceback stays multi-line (structural newlines preserved)
+        assert "\n" in result
+
 
 # --------------------------------------------------------------------------- #
 # JsonFormatter
