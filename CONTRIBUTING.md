@@ -16,7 +16,7 @@ ruff format --check .
 pytest
 ```
 
-CI runs the same checks plus a Docker build and an `python -m build` / `twine check` of the
+CI runs the same checks plus a Docker build and a `python -m build` / `twine check` of the
 distribution. All must pass before merge.
 
 ## Adding an endpoint

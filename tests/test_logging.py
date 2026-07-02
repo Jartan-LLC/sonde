@@ -239,6 +239,17 @@ class TestSecretRedaction:
         assert "ghp_tok" not in PlainFormatter().format(record)
         assert "ghp_tok" not in JsonFormatter().format(record)
 
+    def test_redacts_secret_in_exception_text(self):
+        """A secret smuggled into a traceback (formatException path) is scrubbed."""
+        register_log_secrets(["ghp_tok"])
+        record = _make_record("boom")
+        try:
+            raise ValueError("leaked ghp_tok in message")
+        except ValueError:
+            record.exc_info = sys.exc_info()
+        assert "ghp_tok" not in PlainFormatter().format(record)
+        assert "ghp_tok" not in JsonFormatter().format(record)
+
     def test_empty_secret_is_ignored(self):
         register_log_secrets(["", "real"])
         assert logconfig._SECRETS == ["real"]

@@ -22,11 +22,7 @@ cd sonde
 pip install -e .
 ```
 
-Docker:
-
-```bash
-docker build -t sonde .
-```
+For Docker, see [Docker](#docker) below.
 
 ## Quick Start
 
@@ -76,9 +72,9 @@ The estimate phase uses a priority ladder to determine the safe rate:
 2. **Swept floor** -- If the sweep found a fastest sustainable interval, use that.
 3. **Token-bucket inference** -- If burst results show a clean burst size and a measured recovery window, infer the bucket rate.
 4. **Sequential fallback** -- Use the observed sequential throughput before the first 429.
-5. **No-throttle fallback** -- If nothing ever throttled, fall back to half the measured sequential throughput.
+5. **No-throttle fallback** -- If nothing ever throttled, no ceiling was found, so fall back to a conservative fraction of the measured sequential throughput.
 
-The final recommended interval applies a safety margin (default 80%, configurable with `--margin`), meaning the recommended pace is ~25% slower than the measured ceiling.
+Every rung applies the safety margin (default 80%, configurable with `--margin`) -- the recommended pace is ~25% slower than the measured ceiling. Rung 5 has no measured ceiling, so it applies an extra 0.5 factor on top (~40% of observed throughput at the default margin).
 
 ## Endpoints
 
@@ -120,7 +116,7 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 Minimal example:
 
 ```python
-from sonde.endpoint import Endpoint, RequestSpec, PageResult, register
+from sonde import Endpoint, RequestSpec, PageResult, register
 
 @register
 class MyEndpoint(Endpoint):

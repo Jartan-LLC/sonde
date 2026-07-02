@@ -148,14 +148,30 @@ def test_bad_sweep_intervals_exits_2():
     assert exc.value.code == 2
 
 
+def test_secret_variants_yields_bare_credential():
+    assert list(cli._secret_variants("Bearer ghp_tok")) == ["Bearer ghp_tok", "ghp_tok"]
+    assert list(cli._secret_variants(".ROBLOSECURITY=cookieval")) == [
+        ".ROBLOSECURITY=cookieval",
+        "cookieval",
+    ]
+    assert list(cli._secret_variants("plainvalue")) == ["plainvalue"]
+
+
 def test_unwritable_output_fails_fast(tmp_path, monkeypatch):
-    """A bad --output path aborts with exit 2 before probing, not after."""
-    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    """A bad --output path aborts with exit 2 before probing (fetch never called)."""
+    called = []
+
+    def spy(*a, **k):
+        called.append(1)
+        return core.Result(status=200, elapsed=0.0)
+
+    monkeypatch.setattr(core, "fetch", spy)
     bad = tmp_path / "no_such_dir" / "report.json"
     args = build_parser().parse_args(["asset-owners", "--asset-id", "1", "--output", str(bad)])
     with pytest.raises(SystemExit) as exc:
         cli.run(args)
     assert exc.value.code == 2
+    assert not called, "preflight must fail before any probe request"
 
 
 def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root_logger):

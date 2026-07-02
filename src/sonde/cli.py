@@ -14,6 +14,7 @@ import argparse
 import json
 import logging
 import sys
+from collections.abc import Iterable
 from typing import Any
 
 from . import (
@@ -28,6 +29,18 @@ logger = logging.getLogger(__name__)
 
 # Header names whose values are credentials and must be kept out of logs.
 _SECRET_HEADER_KEYS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key"})
+
+
+def _secret_variants(value: str) -> Iterable[str]:
+    """The full header value plus the bare credential inside it, so a target that
+    echoes just the token (no `Bearer `, no `.ROBLOSECURITY=`) is still redacted."""
+    yield value
+    after_scheme = value.split(" ", 1)  # "Bearer <tok>" -> "<tok>"
+    if len(after_scheme) == 2 and after_scheme[1]:
+        yield after_scheme[1]
+    after_eq = value.split("=", 1)  # ".ROBLOSECURITY=<cookie>" -> "<cookie>"
+    if len(after_eq) == 2 and after_eq[1]:
+        yield after_eq[1]
 
 
 def _int_list(raw: str) -> list[int]:
@@ -184,7 +197,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
     # Keep our own credentials out of logs if the target echoes them back.
-    register_log_secrets(v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS)
+    register_log_secrets(
+        variant
+        for k, v in headers.items()
+        if k.lower() in _SECRET_HEADER_KEYS
+        for variant in _secret_variants(v)
+    )
     session = core.build_session(headers=headers)
 
     logger.info("Endpoint : %s", ep.name)
@@ -273,7 +291,8 @@ def _preflight_output(path: str) -> None:
     if path == "-":
         return
     try:
-        with open(path, "w"):
+        # Append mode: tests writability without truncating an existing report.
+        with open(path, "a"):
             pass
     except OSError as e:
         logger.error("cannot write --output %r: %s", path, e)
