@@ -3,7 +3,14 @@
 __version__ = "0.1.0"
 
 # Re-exported after __version__ so core.py's `from . import __version__` resolves.
-from .endpoint import Endpoint, PageResult, RequestSpec, register  # noqa: E402
+from .endpoint import (  # noqa: E402
+    Endpoint,
+    PageResult,
+    RequestSpec,
+    add_pagination_args,
+    pagination_from_args,
+    register,
+)
 from .provider import Provider  # noqa: E402
 
 __all__ = [
@@ -13,4 +20,6 @@ __all__ = [
     "PageResult",
     "register",
     "Provider",
+    "add_pagination_args",
+    "pagination_from_args",
 ]

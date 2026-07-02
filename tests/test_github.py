@@ -34,7 +34,7 @@ def test_link_parse_no_next():
 
 
 def test_build_request_page_numbers():
-    ep = GitHubStargazersEndpoint(owner="anthropics", repo="x", per_page=100)
+    ep = GitHubStargazersEndpoint(owner="anthropics", repo="x", page_size=100)
     spec = ep.build_request(None)
     assert spec.url.endswith("/repos/anthropics/x/stargazers")
     assert spec.params == {"per_page": 100, "page": 1}
@@ -62,7 +62,7 @@ def test_uses_github_provider():
 
 
 def test_from_args():
-    ns = argparse.Namespace(owner="anthropics", repo="sdk", total=9000, per_page=50)
+    ns = argparse.Namespace(owner="anthropics", repo="sdk", total_items=9000, page_size=50)
     ep = GitHubStargazersEndpoint.from_args(ns)
     assert ep.owner == "anthropics" and ep.repo == "sdk"
-    assert ep.total_items() == 9000 and ep.per_page == 50
+    assert ep.total_items() == 9000 and ep.page_size == 50

@@ -52,7 +52,7 @@ def _args(tmp_path, *extra):
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -127,6 +127,26 @@ def test_log_format_choices():
 def test_output_default():
     args = build_parser().parse_args(["asset-owners", "--asset-id", "1"])
     assert args.output == "sonde_report.json"
+
+
+def test_pagination_flags_consistent_across_endpoints():
+    """Every paginated endpoint spells the same knobs --page-size / --total-items."""
+    for argv in (
+        ["asset-owners", "--asset-id", "1", "--page-size", "25", "--total-items", "500"],
+        [
+            "github-stargazers",
+            "--owner",
+            "o",
+            "--repo",
+            "r",
+            "--page-size",
+            "25",
+            "--total-items",
+            "500",
+        ],
+    ):
+        a = build_parser().parse_args(argv)
+        assert a.page_size == 25 and a.total_items == 500
 
 
 def test_burst_sizes_parses_to_list():
@@ -207,7 +227,7 @@ def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -285,7 +305,7 @@ def test_log_format_json_on_stderr(tmp_path, monkeypatch, capfd, restore_root_lo
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",
@@ -310,7 +330,7 @@ def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, restore
         "asset-owners",
         "--asset-id",
         "20573078",
-        "--total-copies",
+        "--total-items",
         "1470000",
         "--seq-cap",
         "15",

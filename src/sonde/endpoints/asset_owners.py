@@ -13,7 +13,14 @@ from __future__ import annotations
 import argparse
 from typing import Any, Self
 
-from ..endpoint import Endpoint, PageResult, RequestSpec, register
+from ..endpoint import (
+    Endpoint,
+    PageResult,
+    RequestSpec,
+    add_pagination_args,
+    pagination_from_args,
+    register,
+)
 from ..provider import Provider, RobloxProvider
 
 
@@ -28,12 +35,12 @@ class AssetOwnersEndpoint(Endpoint):
     def __init__(
         self,
         asset_id: int,
-        total_copies: int | None = None,
+        total_items: int | None = None,
         page_size: int = 100,
         sort_order: str = "Asc",
     ) -> None:
         self.asset_id = asset_id
-        self._total = total_copies
+        self._total = total_items
         self.page_size = min(page_size, self.MAX_PAGE)
         self.sort_order = sort_order
 
@@ -48,26 +55,16 @@ class AssetOwnersEndpoint(Endpoint):
             required=True,
             help="asset id to probe (e.g. 20573078 for Shaggy)",
         )
-        p.add_argument(
-            "--total-copies",
-            type=int,
-            default=None,
-            help="known total owners, for the wall-clock estimate (e.g. 1470000)",
-        )
-        p.add_argument(
-            "--page-size",
-            type=int,
-            default=100,
-            help="items per page; capped at 100 (the endpoint max)",
-        )
         p.add_argument("--sort-order", choices=["Asc", "Desc"], default="Asc")
+        add_pagination_args(p, page_max=cls.MAX_PAGE)
 
     @classmethod
     def from_args(cls, a: argparse.Namespace) -> Self:
+        page_size, total_items = pagination_from_args(a, page_max=cls.MAX_PAGE)
         return cls(
             asset_id=a.asset_id,
-            total_copies=a.total_copies,
-            page_size=a.page_size,
+            total_items=total_items,
+            page_size=page_size,
             sort_order=a.sort_order,
         )
 

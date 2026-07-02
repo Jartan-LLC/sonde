@@ -30,20 +30,20 @@ Probe the Roblox asset-owners endpoint:
 
 ```bash
 export ROBLOX_COOKIE="your_roblosecurity_cookie"
-sonde asset-owners --asset-id 20573078 --total-copies 1470000
+sonde asset-owners --asset-id 20573078 --total-items 1470000
 ```
 
 Probe GitHub stargazers:
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-sonde github-stargazers --owner anthropics --repo anthropic-sdk-python --total 5000
+sonde github-stargazers --owner anthropics --repo anthropic-sdk-python --total-items 5000
 ```
 
 Anonymous probing (no auth) works too -- you'll just hit lower rate limits:
 
 ```bash
-sonde github-stargazers --owner torvalds --repo linux --total 190000
+sonde github-stargazers --owner torvalds --repo linux --total-items 190000
 ```
 
 Results are written to `sonde_report.json` by default:
@@ -85,9 +85,9 @@ Roblox `inventory.roblox.com/v2/assets/{id}/owners` -- paginated list of owners 
 | Option | Required | Default | Description |
 |---|---|---|---|
 | `--asset-id` | Yes | -- | Asset ID to probe (e.g. `20573078`) |
-| `--total-copies` | No | None | Known total owners, for wall-clock estimate |
-| `--page-size` | No | 100 | Items per page (capped at 100) |
 | `--sort-order` | No | Asc | `Asc` or `Desc` |
+| `--page-size` | No | 100 | Items per page (capped at 100) |
+| `--total-items` | No | None | Known total owners, for wall-clock estimate |
 
 **Auth:** Set `ROBLOX_COOKIE` (legacy web-session) and/or `ROBLOX_BEARER` (Open Cloud) environment variables.
 
@@ -99,8 +99,8 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 |---|---|---|---|
 | `--owner` | Yes | -- | Repository owner/org (e.g. `anthropics`) |
 | `--repo` | Yes | -- | Repository name (e.g. `anthropic-sdk-python`) |
-| `--total` | No | None | Known stargazer count, for wall-clock estimate |
-| `--per-page` | No | 100 | Items per page (max 100) |
+| `--page-size` | No | 100 | Items per page (capped at 100) |
+| `--total-items` | No | None | Known stargazer count, for wall-clock estimate |
 
 **Auth:** Set `GITHUB_TOKEN` environment variable. Without it, you get the anonymous rate limit (60 requests/hour).
 
@@ -111,7 +111,8 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 3. Decorate with `@register` and set a unique `name` (becomes the CLI subcommand).
 4. Override `_make_provider()` to return the appropriate `Provider` (or use the generic one for standard 200/429 + IETF headers).
 5. Optionally implement `total_items()` for scrape-time estimates, `add_arguments()` / `from_args()` for CLI options, and `extra_headers()` for endpoint-specific headers.
-6. Import the new module in `src/sonde/endpoints/__init__.py` so it registers on package load.
+6. If the endpoint is paginated, call `add_pagination_args(parser)` in `add_arguments()` and `pagination_from_args(args)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags.
+7. Import the new module in `src/sonde/endpoints/__init__.py` so it registers on package load.
 
 Minimal example:
 
@@ -187,12 +188,12 @@ Run (mount current directory so the report lands on the host):
 
 ```bash
 docker run --rm -v "$(pwd):/data" -e ROBLOX_COOKIE sonde \
-    asset-owners --asset-id 20573078 --total-copies 1470000
+    asset-owners --asset-id 20573078 --total-items 1470000
 ```
 
 ```bash
 docker run --rm -v "$(pwd):/data" -e GITHUB_TOKEN sonde \
-    github-stargazers --owner anthropics --repo anthropic-sdk-python --total 5000
+    github-stargazers --owner anthropics --repo anthropic-sdk-python --total-items 5000
 ```
 
 The container writes `sonde_report.json` to `/data` (the mounted volume).

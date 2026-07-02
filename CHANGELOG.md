@@ -18,7 +18,8 @@ Initial release.
   fastest sustainable request interval, then combines them into a recommended
   interval and a full-scrape wall-clock estimate.
 - Pluggable endpoint framework: subclass `Endpoint`, decorate with `@register`,
-  and the endpoint becomes a CLI subcommand.
+  and the endpoint becomes a CLI subcommand. Paginated endpoints share the
+  `--page-size` / `--total-items` flags via `add_pagination_args`.
 - Two built-in endpoints: `asset-owners` (Roblox collectible owners) and
   `github-stargazers` (GitHub repository stargazers).
 - Provider abstraction for parsing rate-limit response headers, with a generic

@@ -25,7 +25,16 @@ from typing import Any, Self
 
 from .provider import Provider
 
-__all__ = ["Endpoint", "RequestSpec", "PageResult", "register", "get", "all_endpoints"]
+__all__ = [
+    "Endpoint",
+    "RequestSpec",
+    "PageResult",
+    "register",
+    "get",
+    "all_endpoints",
+    "add_pagination_args",
+    "pagination_from_args",
+]
 
 
 @dataclass
@@ -118,3 +127,28 @@ def get(name: str) -> type[Endpoint] | None:
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
     return dict(_REGISTRY)
+
+
+# --------------------------------------------------------------------------- #
+# Shared pagination flags. Paginated endpoints opt in by calling these from
+# add_arguments / from_args, so --page-size and --total-items are spelled the
+# same everywhere. Non-paginated endpoints simply don't call them.
+# --------------------------------------------------------------------------- #
+def add_pagination_args(parser: argparse.ArgumentParser, *, page_max: int = 100) -> None:
+    """Register the standard `--page-size` / `--total-items` flags on `parser`."""
+    parser.add_argument(
+        "--page-size", type=int, default=page_max, help=f"items per page; capped at {page_max}"
+    )
+    parser.add_argument(
+        "--total-items",
+        type=int,
+        default=None,
+        help="known total item count, for the wall-clock estimate",
+    )
+
+
+def pagination_from_args(
+    args: argparse.Namespace, *, page_max: int = 100
+) -> tuple[int, int | None]:
+    """Return `(page_size, total_items)` from parsed args, page_size clamped to `page_max`."""
+    return min(args.page_size, page_max), args.total_items
