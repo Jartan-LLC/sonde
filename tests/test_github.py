@@ -9,7 +9,6 @@ from sonde.endpoints.github_stargazers import (
 )
 from tests.helpers import FakeResp
 
-
 LINK_WITH_NEXT = (
     "<https://api.github.com/repositories/1/stargazers?per_page=100&page=2>; "
     'rel="next", '

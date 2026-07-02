@@ -486,7 +486,9 @@ def phase_sweep(
             consecutive = consecutive + 1 if r.rclass == core.RClass.THROTTLED else 0
             if consecutive >= 3:
                 return used, True
-        return used, consecutive >= 3
+        # Cap exhausted without 3 consecutive throttles -> never confirmed empty. A lone
+        # or paired 429 could be transient, so don't claim the bucket was drained.
+        return used, False
 
     for interval in intervals:  # sorted slow -> fast (descending seconds)
         if budget.remaining() < drain_cap + probe_count:
@@ -652,7 +654,7 @@ def phase_estimate(
 
     total_items = endpoint.total_items()
     total_pages = None
-    if page_count is not None and page_count > 0 and total_items is not None:
+    if page_count > 0 and total_items is not None:
         total_pages = math.ceil(total_items / page_count)
         logger.info("  total items         : %s", format(total_items, ","))
         logger.info("  items per page      : %s", page_count)
@@ -672,7 +674,7 @@ def phase_estimate(
         else:
             logger.info("  safe rate estimate  : ~%.0f req/min", safe_rate_per_min)
         logger.info("  basis               : %s", basis)
-        if total_pages:
+        if total_pages is not None:
             minutes = total_pages / safe_rate_per_min
             logger.info("  => full scrape time : ~%.0f min  (~%.1f h)", minutes, minutes / 60)
     else:
@@ -694,7 +696,7 @@ def phase_estimate(
         "safe_rate_basis": basis,
         "estimated_minutes": (
             round(total_pages / safe_rate_per_min, 1)
-            if (total_pages and safe_rate_per_min)
+            if (total_pages is not None and safe_rate_per_min)
             else None
         ),
     }

@@ -5,7 +5,7 @@ resolve instantly and deterministically."""
 import pytest
 
 from sonde import core, phases
-from tests.helpers import make_bucket, FakeEndpoint
+from tests.helpers import FakeEndpoint, make_bucket
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +62,29 @@ def test_sweep_aborts_when_undrainable(clock, monkeypatch, fake_endpoint):
     )
     assert floor is None
     assert rows == []  # aborts on the first (undrainable) interval
+
+
+def test_sweep_aborts_when_drain_unconfirmed(clock, monkeypatch, fake_endpoint):
+    # capacity 10, drain cap 12 -> the bucket does empty, but drain ends on only 2
+    # consecutive throttles, never the 3-in-a-row that CONFIRMS empty. A lone/paired
+    # 429 could be transient, so drain conservatively reports "not emptied" and the
+    # sweep aborts with no floor rather than measure from an unconfirmed-empty bucket.
+    # Guards drain-confirmation semantics: fails against a `consecutive > 0` fallthrough
+    # (which would call this emptied and report a floor). The sibling undrainable test
+    # reaches the fallthrough at consecutive==0, so only this one exercises the 1-2 case.
+    monkeypatch.setattr(core, "fetch", make_bucket(refill_period=60.0, capacity=10))
+    floor, rows = phases.phase_sweep(
+        None,
+        fake_endpoint,
+        core.Budget(5000),
+        cursor_pool=["a"],
+        intervals=[0.1],
+        probe_count=5,
+        drain_cap=12,
+        tolerance=0.1,
+    )
+    assert floor is None
+    assert rows == []
 
 
 def test_sweep_respects_budget(clock, monkeypatch, fake_endpoint):
@@ -171,6 +194,25 @@ def test_estimate_rate_only_without_total():
     assert est["total_pages"] is None
     assert est["estimated_minutes"] is None
     assert est["safe_rate_per_min"] is not None  # rate still reported
+
+
+def test_estimate_zero_total_reports_zero_pages():
+    # A caller-supplied total of 0 is a KNOWN total, distinct from None (unknown):
+    # phase_estimate reports 0 pages / ~0 min, not "rate only". (The natural empty-
+    # resource CLI path instead yields page_count=0 and takes the rate-only branch;
+    # this unit test pins the total==0 contract directly.)
+    est = phases.phase_estimate(
+        FakeEndpoint(total=0, page_size=100),
+        page_count=100,
+        seq_summary={},
+        burst_results=[],
+        measured_window=None,
+        swept_interval=0.05,
+        margin=0.8,
+        rl={},
+    )
+    assert est["total_pages"] == 0
+    assert est["estimated_minutes"] == 0.0
 
 
 # --------------------------------------------------------------------------- #

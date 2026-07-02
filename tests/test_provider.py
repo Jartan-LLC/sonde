@@ -4,8 +4,8 @@ for the generic, Roblox, and GitHub providers."""
 import time
 
 from sonde.core import RClass
-from sonde.provider import Provider, RobloxProvider, GitHubProvider
-from tests.helpers import FakeResp, RLH_420, RLH_15
+from sonde.provider import GitHubProvider, Provider, RobloxProvider
+from tests.helpers import RLH_15, RLH_420, FakeResp
 
 
 # --------------------------------------------------------------------------- #

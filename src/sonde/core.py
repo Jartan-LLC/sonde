@@ -14,12 +14,15 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from http.cookiejar import DefaultCookiePolicy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 from requests.adapters import HTTPAdapter
 
 from . import __version__
+
+if TYPE_CHECKING:
+    from .endpoint import Endpoint
 
 BASE_HEADERS = {
     "Accept": "application/json",
@@ -94,14 +97,15 @@ def build_session(max_conns: int = 10, headers: dict[str, str] | None = None) ->
 class Result:
     status: int
     elapsed: float
-    rclass: RClass | None = None  # defaults from status via default_rclass()
+    # None only on input -> derived from status in __post_init__ (never None after construction).
+    rclass: RClass | None = None
     count: int = 0
     next_cursor: Any = None
     retry_after: float | None = None
     headers: dict[str, str] = field(default_factory=dict)
     error: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.rclass is None:
             self.rclass = default_rclass(self.status)
 
@@ -115,7 +119,7 @@ def interesting_headers(resp: Any) -> dict[str, str]:
 _PARSE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
 
 
-def _parse_response(resp: Any, elapsed: float, endpoint: Any) -> Result:
+def _parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
     """Classify via the endpoint's provider, then (on success) let the endpoint pull
     item count + next cursor from the FULL response (so header-based pagination and
     non-JSON bodies are possible)."""
@@ -149,7 +153,7 @@ def _parse_response(resp: Any, elapsed: float, endpoint: Any) -> Result:
     return res
 
 
-def fetch(session: requests.Session, endpoint: Any, cursor: Any, budget: Budget) -> Result:
+def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Budget) -> Result:
     """One probe request for `endpoint` at pagination position `cursor`."""
     if not budget.take():
         return Result(

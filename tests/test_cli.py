@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from sonde import core, cli
+from sonde import cli, core
 from sonde.cli import build_parser
-from tests.helpers import make_bucket, RLH_420
+from tests.helpers import RLH_420, make_bucket
 
 
 # --------------------------------------------------------------------------- #

@@ -16,8 +16,12 @@ import logging
 import sys
 from typing import Any
 
-from . import core, endpoint, phases
-from . import endpoints  # noqa: F401  (import registers all endpoints)
+from . import (
+    core,
+    endpoint,
+    endpoints,  # noqa: F401  (import registers all endpoints)
+    phases,
+)
 from .logconfig import setup_logging
 
 logger = logging.getLogger(__name__)

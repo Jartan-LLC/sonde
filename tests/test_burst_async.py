@@ -7,9 +7,8 @@ import sys
 
 import pytest
 
-from sonde import phases
-from sonde import core
-from tests.helpers import make_fake_httpx, FakeEndpoint
+from sonde import core, phases
+from tests.helpers import FakeEndpoint, make_fake_httpx
 
 
 @pytest.fixture
