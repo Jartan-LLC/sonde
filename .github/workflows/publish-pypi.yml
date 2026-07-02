@@ -35,9 +35,11 @@ jobs:
             exit 1
           fi
 
-      - run: pip install build
+      - run: pip install build twine
 
       - run: python -m build
+
+      - run: python -m twine check dist/*
 
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
 

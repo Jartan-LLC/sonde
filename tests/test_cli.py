@@ -149,12 +149,37 @@ def test_bad_sweep_intervals_exits_2():
 
 
 def test_secret_variants_yields_bare_credential():
-    assert list(cli._secret_variants("Bearer ghp_tok")) == ["Bearer ghp_tok", "ghp_tok"]
+    assert list(cli._secret_variants("Bearer ghp_longtoken")) == [
+        "Bearer ghp_longtoken",
+        "ghp_longtoken",
+    ]
     assert list(cli._secret_variants(".ROBLOSECURITY=cookieval")) == [
         ".ROBLOSECURITY=cookieval",
         "cookieval",
     ]
     assert list(cli._secret_variants("plainvalue")) == ["plainvalue"]
+    # bare tail shorter than 8 chars is not emitted (avoids over-redacting log text)
+    assert list(cli._secret_variants("Bearer abc")) == ["Bearer abc"]
+
+
+def test_configured_secret_absent_from_logs(tmp_path, monkeypatch, capfd, restore_root_logger):
+    """End-to-end: a credential the target echoes back is scrubbed from stderr
+    through cli.main() — exercises run()'s header filter -> register -> _scrub."""
+    monkeypatch.setenv("ROBLOX_COOKIE", "SUPERSECRETCOOKIEVALUE")
+
+    def echo_secret(session, ep, cursor, budget):
+        budget.take()  # target echoes the bare cookie back in an error body
+        return core.Result(status=403, elapsed=0.01, error="denied: SUPERSECRETCOOKIEVALUE")
+
+    monkeypatch.setattr(core, "fetch", echo_secret)
+    argv = ["asset-owners", "--asset-id", "1", "--output", "-", "--log-format", "json"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
+    captured = capfd.readouterr()
+    assert "SUPERSECRETCOOKIEVALUE" not in captured.err
+    assert "SUPERSECRETCOOKIEVALUE" not in captured.out
+    assert "***" in captured.err  # redaction actually fired, line not merely absent
 
 
 def test_unwritable_output_fails_fast(tmp_path, monkeypatch):

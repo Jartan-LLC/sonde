@@ -69,7 +69,7 @@ class Provider:
                         pass
             policies.append((count, window))
 
-        windowed = [(c, w) for c, w in policies if w]
+        windowed = [(c, w) for c, w in policies if w and w > 0]
         if windowed:
             # Lowest sustained rate (count/window) binds, NOT the smallest window:
             # a short-window policy can permit a higher rate than a long-window one.

@@ -35,11 +35,13 @@ def _secret_variants(value: str) -> Iterable[str]:
     """The full header value plus the bare credential inside it, so a target that
     echoes just the token (no `Bearer `, no `.ROBLOSECURITY=`) is still redacted."""
     yield value
+    # Only emit a bare variant if it's long enough to be a real credential, so a
+    # short prefix can't over-redact unrelated log text.
     after_scheme = value.split(" ", 1)  # "Bearer <tok>" -> "<tok>"
-    if len(after_scheme) == 2 and after_scheme[1]:
+    if len(after_scheme) == 2 and len(after_scheme[1]) >= 8:
         yield after_scheme[1]
     after_eq = value.split("=", 1)  # ".ROBLOSECURITY=<cookie>" -> "<cookie>"
-    if len(after_eq) == 2 and after_eq[1]:
+    if len(after_eq) == 2 and len(after_eq[1]) >= 8:
         yield after_eq[1]
 
 
@@ -292,6 +294,8 @@ def _preflight_output(path: str) -> None:
         return
     try:
         # Append mode: tests writability without truncating an existing report.
+        # On a new path this creates a zero-byte file; if the probe is interrupted
+        # before _dump, that empty file remains (acceptable for fail-fast).
         with open(path, "a"):
             pass
     except OSError as e:
