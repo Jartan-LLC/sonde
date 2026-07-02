@@ -35,9 +35,11 @@ def test_ietf_parse_absent():
     assert Provider().parse_rate_limit({"server": "x"}) == {}
 
 
-def test_ietf_smallest_window_binds():
+def test_ietf_lowest_rate_binds():
+    # Three policies, rates: 1000/3600=0.28/s, 50/60=0.83/s, 100/600=0.17/s.
+    # The tightest SUSTAINED cap is the lowest rate (100/600s), not the smallest window.
     rl = Provider().parse_rate_limit({"x-ratelimit-limit": "1000;w=3600, 50;w=60, 100;w=600"})
-    assert (rl["limit"], rl["window_s"]) == (50, 60)
+    assert (rl["limit"], rl["window_s"]) == (100, 600)
 
 
 def test_ietf_no_window():

@@ -5,8 +5,25 @@ from __future__ import annotations
 import json
 import logging
 import logging.config
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
+
+# Secret substrings to scrub from log output if a target echoes them back.
+_SECRETS: list[str] = []
+
+
+def register_log_secrets(values: Iterable[str]) -> None:
+    """Register secret substrings to redact from all subsequent log output."""
+    for v in values:
+        if v and v not in _SECRETS:
+            _SECRETS.append(v)
+
+
+def _scrub(text: str) -> str:
+    for secret in _SECRETS:
+        text = text.replace(secret, "***")
+    return text
 
 
 class PlainFormatter(logging.Formatter):
@@ -50,15 +67,15 @@ class PlainFormatter(logging.Formatter):
         # Preserve leading \n (phase banners) but escape embedded control chars.
         stripped = msg.lstrip("\n")
         leading = len(msg) - len(stripped)
-        return "\n" * leading + stripped.translate(self._ESCAPES)
+        return "\n" * leading + _scrub(stripped).translate(self._ESCAPES)
 
     def formatException(self, ei) -> str:
         # Base format() appends this (unescaped) after the message; neutralise
         # control chars while preserving the traceback's structural newlines.
-        return super().formatException(ei).translate(self._EXC_ESCAPES)
+        return _scrub(super().formatException(ei)).translate(self._EXC_ESCAPES)
 
     def formatStack(self, stack_info: str) -> str:
-        return super().formatStack(stack_info).translate(self._EXC_ESCAPES)
+        return _scrub(super().formatStack(stack_info)).translate(self._EXC_ESCAPES)
 
 
 class JsonFormatter(logging.Formatter):
@@ -71,10 +88,10 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             # Strip banner leading \n (see setup_logging's formatter contract) so
             # each record stays a single line.
-            "message": record.getMessage().lstrip("\n"),
+            "message": _scrub(record.getMessage().lstrip("\n")),
         }
         if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
+            payload["exc"] = _scrub(self.formatException(record.exc_info))
         return json.dumps(payload, default=str)
 
 
@@ -86,6 +103,7 @@ def setup_logging(*, level: int = logging.INFO, fmt: str = "plain") -> None:
     new formatter registered here must decide how to handle them: PlainFormatter
     preserves them, JsonFormatter strips them to keep each record single-line.
     """
+    _SECRETS.clear()  # reset per run
     logging.config.dictConfig(
         {
             "version": 1,

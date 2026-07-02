@@ -5,13 +5,20 @@ on:
     tags:
       - "v*"
 
-permissions:
-  id-token: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment: pypi
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -19,8 +26,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install build
+      - name: Verify tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/sonde/__init__.py)"
+          if [ "$tag" != "$ver" ]; then
+            echo "tag '$tag' does not match __version__ '$ver'"
+            exit 1
+          fi
+
+      - run: pip install build twine
 
       - run: python -m build
 
+      - run: python -m twine check dist/*
+
       - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+
+  release:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag

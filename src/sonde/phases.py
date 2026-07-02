@@ -543,8 +543,12 @@ def phase_estimate(
         safe_rate_per_min = (n / t) * 60.0 * margin
         basis = f"sequential {n} req / {t:.1f}s"
     if safe_rate_per_min is None and seq_summary.get("seq_req_per_sec"):
-        safe_rate_per_min = seq_summary["seq_req_per_sec"] * 60.0 * 0.5
-        basis = "no 429 observed; half of measured sequential throughput"
+        # Nothing throttled anywhere, so there's no measured ceiling. Treat observed
+        # throughput as a soft ceiling, apply --margin, then halve again for the
+        # extra uncertainty — this is the most conservative rung by construction.
+        factor = 0.5 * margin
+        safe_rate_per_min = seq_summary["seq_req_per_sec"] * 60.0 * factor
+        basis = f"no 429 observed; {factor:.0%} of measured sequential throughput"
 
     total_items = endpoint.total_items()
     total_pages = None

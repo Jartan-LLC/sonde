@@ -25,6 +25,8 @@ from typing import Any
 
 from .core import RClass
 
+__all__ = ["Provider", "RobloxProvider", "GitHubProvider"]
+
 
 class Provider:
     """Generic provider: 200/429, IETF-draft rate-limit headers, no auth."""
@@ -67,9 +69,11 @@ class Provider:
                         pass
             policies.append((count, window))
 
-        windowed = [(c, w) for c, w in policies if w]
+        windowed = [(c, w) for c, w in policies if w and w > 0]
         if windowed:
-            limit, window_s = min(windowed, key=lambda t: t[1])  # smallest window binds
+            # Lowest sustained rate (count/window) binds, NOT the smallest window:
+            # a short-window policy can permit a higher rate than a long-window one.
+            limit, window_s = min(windowed, key=lambda t: t[0] / t[1])
         elif policies:
             limit, window_s = min(policies, key=lambda t: t[0])[0], None
         else:

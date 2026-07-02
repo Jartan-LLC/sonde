@@ -53,18 +53,32 @@ def test_budget_thread_safe():
 # Session
 # --------------------------------------------------------------------------- #
 def test_build_session_pool_and_cookie_policy():
-    s = core.build_session(
-        max_conns=80, headers={"Cookie": ".ROBLOSECURITY=X", "Accept": "application/json"}
-    )
+    s = core.build_session(headers={"Cookie": ".ROBLOSECURITY=X", "Accept": "application/json"})
     adapter = s.get_adapter("https://inventory.roblox.com")
-    assert adapter._pool_maxsize == 80
+    assert adapter._pool_maxsize == 10  # fixed pool; serial phases only
     assert s.headers["Cookie"] == ".ROBLOSECURITY=X"
     assert s.cookies.get_policy().__class__.__name__ == "DefaultCookiePolicy"
 
 
-def test_build_session_min_pool():
-    s = core.build_session(max_conns=2)
+def test_build_session_defaults_base_headers():
+    s = core.build_session()
     assert s.get_adapter("https://x")._pool_maxsize == 10
+    assert s.headers["User-Agent"].startswith("sonde/")
+
+
+def test_interesting_headers_excludes_secrets():
+    """The report header allowlist must never surface Set-Cookie / auth-echo headers."""
+    resp = FakeResp(
+        200,
+        headers={
+            "Set-Cookie": "session=secret",
+            "Authorization": "Bearer tok",
+            "WWW-Authenticate": "Bearer",
+            "x-ratelimit-limit": "100",
+            "server": "gw",
+        },
+    )
+    assert core.interesting_headers(resp) == {"x-ratelimit-limit": "100", "server": "gw"}
 
 
 # --------------------------------------------------------------------------- #

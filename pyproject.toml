@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,20 @@ description = "Probe any HTTP API for its rate limits, burst ceiling, and full-s
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
+authors = [{ name = "Jartan LLC" }]
+keywords = ["rate-limit", "http", "api", "scraping", "benchmark", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "requests>=2.28",
     "httpx>=0.24",
@@ -23,11 +37,20 @@ dev = [
 [project.scripts]
 sonde = "sonde.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/Jartan-LLC/sonde"
+Repository = "https://github.com/Jartan-LLC/sonde"
+Issues = "https://github.com/Jartan-LLC/sonde/issues"
+Changelog = "https://github.com/Jartan-LLC/sonde/blob/main/CHANGELOG.md"
+
 [tool.setuptools.dynamic]
 version = {attr = "sonde.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sonde = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

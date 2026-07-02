@@ -224,6 +224,28 @@ def test_estimate_infers_from_token_bucket():
     assert est["safe_rate_per_min"] == pytest.approx(40.0, abs=1e-6)  # 10/12 * 60 * 0.8
 
 
+def test_estimate_no_throttle_fallback_scales_with_margin():
+    """Rung 5: nothing throttled -> no ceiling, so 0.5 * margin of measured
+    sequential throughput. --margin scales it (the most conservative rung)."""
+
+    def est(margin):
+        return phases.phase_estimate(
+            FakeEndpoint(total=None, page_size=100),
+            page_count=100,
+            seq_summary={"seq_req_per_sec": 10.0},  # no first_429 -> rung 5, not rung 4
+            burst_results=[],
+            measured_window=None,
+            swept_interval=None,
+            margin=margin,
+            rl={},
+        )
+
+    e = est(0.8)
+    assert e["safe_rate_basis"] == "no 429 observed; 40% of measured sequential throughput"
+    assert e["safe_rate_per_min"] == pytest.approx(240.0)  # 10 * 60 * (0.5 * 0.8)
+    assert est(0.5)["safe_rate_per_min"] == pytest.approx(150.0)  # 10 * 60 * (0.5 * 0.5)
+
+
 # --------------------------------------------------------------------------- #
 # Recovery probe — geometric backoff generator + measured return value
 # --------------------------------------------------------------------------- #

@@ -129,6 +129,76 @@ def test_output_default():
     assert args.output == "sonde_report.json"
 
 
+def test_burst_sizes_parses_to_list():
+    args = build_parser().parse_args(
+        ["asset-owners", "--asset-id", "1", "--burst-sizes", "5,10,15"]
+    )
+    assert args.burst_sizes == [5, 10, 15]
+
+
+def test_bad_burst_sizes_exits_2():
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["asset-owners", "--asset-id", "1", "--burst-sizes", "10,abc"])
+    assert exc.value.code == 2  # argparse usage error
+
+
+def test_bad_sweep_intervals_exits_2():
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["asset-owners", "--asset-id", "1", "--sweep-intervals", "1,x"])
+    assert exc.value.code == 2
+
+
+def test_secret_variants_yields_bare_credential():
+    assert list(cli._secret_variants("Bearer ghp_longtoken")) == [
+        "Bearer ghp_longtoken",
+        "ghp_longtoken",
+    ]
+    assert list(cli._secret_variants(".ROBLOSECURITY=cookieval")) == [
+        ".ROBLOSECURITY=cookieval",
+        "cookieval",
+    ]
+    assert list(cli._secret_variants("plainvalue")) == ["plainvalue"]
+    # bare tail shorter than 8 chars is not emitted (avoids over-redacting log text)
+    assert list(cli._secret_variants("Bearer abc")) == ["Bearer abc"]
+
+
+def test_configured_secret_absent_from_logs(tmp_path, monkeypatch, capfd, restore_root_logger):
+    """End-to-end: a credential the target echoes back is scrubbed from stderr
+    through cli.main() — exercises run()'s header filter -> register -> _scrub."""
+    monkeypatch.setenv("ROBLOX_COOKIE", "SUPERSECRETCOOKIEVALUE")
+
+    def echo_secret(session, ep, cursor, budget):
+        budget.take()  # target echoes the bare cookie back in an error body
+        return core.Result(status=403, elapsed=0.01, error="denied: SUPERSECRETCOOKIEVALUE")
+
+    monkeypatch.setattr(core, "fetch", echo_secret)
+    argv = ["asset-owners", "--asset-id", "1", "--output", "-", "--log-format", "json"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
+    captured = capfd.readouterr()
+    assert "SUPERSECRETCOOKIEVALUE" not in captured.err
+    assert "SUPERSECRETCOOKIEVALUE" not in captured.out
+    assert "***" in captured.err  # redaction actually fired, line not merely absent
+
+
+def test_unwritable_output_fails_fast(tmp_path, monkeypatch):
+    """A bad --output path aborts with exit 2 before probing (fetch never called)."""
+    called = []
+
+    def spy(*a, **k):
+        called.append(1)
+        return core.Result(status=200, elapsed=0.0)
+
+    monkeypatch.setattr(core, "fetch", spy)
+    bad = tmp_path / "no_such_dir" / "report.json"
+    args = build_parser().parse_args(["asset-owners", "--asset-id", "1", "--output", str(bad)])
+    with pytest.raises(SystemExit) as exc:
+        cli.run(args)
+    assert exc.value.code == 2
+    assert not called, "preflight must fail before any probe request"
+
+
 def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root_logger):
     """--output - writes valid JSON to stdout, no file created. -q suppresses INFO."""
     monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
@@ -180,7 +250,9 @@ def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, restore_root_logge
         "-",
         "-q",
     ]
-    cli.main(argv)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2  # non-OK sanity aborts with a non-zero exit
     captured = capfd.readouterr()
     report = json.loads(captured.out)
     assert report["sanity"]["status"] == 403
@@ -311,7 +383,9 @@ def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, restore_root_l
         "--log-format",
         "json",
     ]
-    cli.main(argv)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
     _assert_all_stderr_json(capfd.readouterr())
 
 
