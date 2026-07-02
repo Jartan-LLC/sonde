@@ -1,7 +1,6 @@
 """Tests for the CLI parser and the run() orchestration end-to-end (mocked fetch)."""
 
 import json
-import logging
 
 import pytest
 
@@ -138,20 +137,10 @@ def test_output_default():
     assert args.output == "sonde_report.json"
 
 
-@pytest.fixture()
-def _restore_root_logger():
-    root = logging.getLogger()
-    old_handlers = root.handlers[:]
-    old_level = root.level
-    yield
-    root.handlers = old_handlers
-    root.level = old_level
-
-
-def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, _restore_root_logger):
-    """--output - writes valid JSON to stdout, no file created."""
+def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, restore_root_logger):
+    """--output - writes valid JSON to stdout, no file created. -q suppresses INFO."""
     monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
-    out = tmp_path / "report.json"
+    monkeypatch.chdir(tmp_path)
     argv = [
         "asset-owners",
         "--asset-id",
@@ -167,16 +156,21 @@ def test_output_dash_writes_to_stdout(tmp_path, monkeypatch, capfd, _restore_roo
         "--output",
         "-",
         "-q",
+        "--log-format",
+        "json",
     ]
     cli.main(argv)
     captured = capfd.readouterr()
     report = json.loads(captured.out)
     assert report["endpoint"] == "asset-owners"
     assert "estimate" in report
-    assert not out.exists()
+    assert not (tmp_path / "sonde_report.json").exists(), "default file should not be created"
+    for line in captured.err.strip().split("\n"):
+        if line.strip():
+            assert json.loads(line)["level"] != "INFO", "-q should suppress INFO"
 
 
-def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, _restore_root_logger):
+def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, restore_root_logger):
     """--output - still produces JSON on the abort path (non-200 sanity)."""
 
     def always_403(session, ep, cursor, budget):
@@ -184,7 +178,7 @@ def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, _restore_root_logg
         return core.Result(status=403, elapsed=0.01, error="forbidden")
 
     monkeypatch.setattr(core, "fetch", always_403)
-    out = tmp_path / "report.json"
+    monkeypatch.chdir(tmp_path)
     argv = [
         "asset-owners",
         "--asset-id",
@@ -197,7 +191,7 @@ def test_output_dash_abort_path(tmp_path, monkeypatch, capfd, _restore_root_logg
     captured = capfd.readouterr()
     report = json.loads(captured.out)
     assert report["sanity"]["status"] == 403
-    assert not out.exists()
+    assert not (tmp_path / "sonde_report.json").exists()
 
 
 def _assert_all_stderr_json(captured):
@@ -214,7 +208,7 @@ def _assert_all_stderr_json(captured):
         assert "message" in parsed
 
 
-def test_log_format_json_on_stderr(tmp_path, monkeypatch, capfd, _restore_root_logger):
+def test_log_format_json_on_stderr(tmp_path, monkeypatch, capfd, restore_root_logger):
     """--log-format json produces structured JSON log lines on stderr (header path)."""
     monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
     out = tmp_path / "report.json"
@@ -239,7 +233,7 @@ def test_log_format_json_on_stderr(tmp_path, monkeypatch, capfd, _restore_root_l
     _assert_all_stderr_json(capfd.readouterr())
 
 
-def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, _restore_root_logger):
+def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, restore_root_logger):
     """Exercises sweep/drain/interval format strings through --log-format json."""
     monkeypatch.setattr(core, "fetch", make_bucket(0.05, 30, headers={"server": "x"}))
     out = tmp_path / "report.json"
@@ -267,7 +261,39 @@ def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, _restor
     _assert_all_stderr_json(capfd.readouterr())
 
 
-def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, _restore_root_logger):
+def test_log_format_json_verbose_throttle(clock, tmp_path, monkeypatch, capfd, restore_root_logger):
+    """Exercises DEBUG format strings (headers, throttle headers, cooldown) via -v."""
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 5, 5, headers=RLH_420))
+    out = tmp_path / "report.json"
+    argv = [
+        "asset-owners",
+        "--asset-id",
+        "20573078",
+        "--seq-cap",
+        "10",
+        "--burst-sizes",
+        "10",
+        "--burst-cooldown",
+        "0",
+        "--skip-sweep",
+        "--output",
+        str(out),
+        "--log-format",
+        "json",
+        "-v",
+    ]
+    cli.main(argv)
+    captured = capfd.readouterr()
+    lines = [line for line in captured.err.strip().split("\n") if line.strip()]
+    assert len(lines) > 0
+    for line in lines:
+        parsed = json.loads(line)
+        assert "timestamp" in parsed
+    debug_lines = [line for line in lines if json.loads(line)["level"] == "DEBUG"]
+    assert len(debug_lines) > 0, "no DEBUG lines emitted — -v flag not working"
+
+
+def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, restore_root_logger):
     """Exercises non-200 sanity + auth-warning format strings through --log-format json."""
 
     def always_403(session, ep, cursor, budget):

@@ -154,8 +154,24 @@ def phase_seq(session, endpoint, budget, cap):
 
 
 # --------------------------------------------------------------------------- #
-# Recovery probe (sync) — how long after a 429 until requests succeed again
+# Recovery probe — shared logic + sync wrapper
 # --------------------------------------------------------------------------- #
+def _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
+    """Yield (step_seconds, cursor) for each recovery poll.
+    Pure state machine — no I/O. Callers sleep then fetch after each yield."""
+    step = start_step
+    waited = 0.0
+    i = 0
+    for _ in range(max_polls):
+        cur = cursor_pool[i % len(cursor_pool)] if cursor_pool else None
+        i += 1
+        yield step, cur, waited + step
+        waited += step
+        if waited >= max_wait:
+            break
+        step *= 1.6
+
+
 def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wait, max_polls):
     """Geometric backoff: fine early (to catch a sub-second refill), widening so a
     long window still finishes within max_polls requests. Returns cumulative wait at
@@ -166,14 +182,8 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
         max_polls,
         max_wait,
     )
-    waited = 0.0
-    step = start_step
-    i = 0
-    for _ in range(max_polls):
+    for step, cur, waited in _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
         time.sleep(step)
-        waited += step
-        cur = cursor_pool[i % len(cursor_pool)] if cursor_pool else None
-        i += 1
         r = core.fetch(session, endpoint, cur, budget)
         if r.rclass == core.RClass.OK:
             logger.info("    recovered after ~%.2fs", waited)
@@ -181,9 +191,6 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
         if r.rclass == core.RClass.BUDGET:
             logger.warning("    budget exhausted during recovery probe.")
             return None
-        if waited >= max_wait:
-            break
-        step *= 1.6
     logger.info("    no recovery within %.1fs / %s polls.", waited, max_polls)
     return None
 
@@ -294,14 +301,10 @@ def phase_burst_async(
             recovery_polls,
             recovery_max,
         )
-        waited = 0.0
-        step = recovery_step
-        i = 0
-        for _ in range(recovery_polls):
+        for step, cur, waited in _recovery_steps(
+            recovery_step, recovery_max, recovery_polls, cursor_pool
+        ):
             await asyncio.sleep(step)
-            waited += step
-            cur = cursor_pool[i % len(cursor_pool)] if cursor_pool else None
-            i += 1
             r = await afetch(client, cur)
             if r.rclass == core.RClass.OK:
                 logger.info("    recovered after ~%.2fs", waited)
@@ -309,9 +312,6 @@ def phase_burst_async(
             if r.rclass == core.RClass.BUDGET:
                 logger.warning("    budget exhausted during recovery probe.")
                 return None
-            if waited >= recovery_max:
-                break
-            step *= 1.6
         logger.info("    no recovery within %.1fs / %s polls.", waited, recovery_polls)
         return None
 

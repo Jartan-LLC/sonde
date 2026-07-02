@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from sonde.logging import JsonFormatter, PlainFormatter, setup_logging
+from sonde.logconfig import JsonFormatter, PlainFormatter, setup_logging
 
 
 # --------------------------------------------------------------------------- #
@@ -26,14 +26,8 @@ def _make_record(msg, level=logging.INFO, name="sonde.test"):
 
 
 @pytest.fixture(autouse=True)
-def _restore_root_logger():
-    """Save and restore root logger state so setup_logging tests don't leak."""
-    root = logging.getLogger()
-    old_handlers = root.handlers[:]
-    old_level = root.level
-    yield
-    root.handlers = old_handlers
-    root.level = old_level
+def _auto_restore_logger(restore_root_logger):
+    """Autouse wrapper around the shared conftest fixture."""
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +64,22 @@ class TestPlainFormatter:
         record = _make_record("col1\tcol2\tcol3")
         result = self.fmt.format(record)
         assert "\t" in result
+
+    def test_escapes_control_chars_from_percent_args(self):
+        record = logging.LogRecord(
+            name="sonde.test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="  headers: %s",
+            args=("\x1b[31mred\ninjected",),
+            exc_info=None,
+        )
+        result = self.fmt.format(record)
+        assert "\x1b" not in result
+        assert "\n" not in result
+        assert "\\x1b" in result
+        assert "\\n" in result
 
     def test_clean_message_unchanged(self):
         msg = "  burst=10   200=8    429=2    other=0   in 1.23s"

@@ -10,10 +10,7 @@ from typing import Any
 
 
 class PlainFormatter(logging.Formatter):
-    """Message-only formatter that escapes control chars to block log injection.
-
-    Leading newlines are preserved (phase banners use them for visual separation).
-    """
+    """Message-only formatter that escapes control chars in the message body."""
 
     _ESCAPES = str.maketrans(
         {
@@ -29,6 +26,8 @@ class PlainFormatter(logging.Formatter):
 
     def formatMessage(self, record: logging.LogRecord) -> str:
         msg = super().formatMessage(record)
+        # Preserve leading \n (phase banners) but escape embedded control chars.
+        # Exception tracebacks appended by base format() are not escaped.
         stripped = msg.lstrip("\n")
         leading = len(msg) - len(stripped)
         return "\n" * leading + stripped.translate(self._ESCAPES)
@@ -42,7 +41,7 @@ class JsonFormatter(logging.Formatter):
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": record.getMessage().lstrip("\n"),
         }
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)

@@ -1,5 +1,6 @@
 """pytest fixtures. Shared fakes live in tests/helpers.py."""
 
+import logging
 import time
 
 import pytest
@@ -25,3 +26,14 @@ def bucket_factory():
 @pytest.fixture
 def fake_endpoint():
     return FakeEndpoint(total=500_000, page_size=100)
+
+
+@pytest.fixture()
+def restore_root_logger():
+    """Save and restore root logger state so setup_logging tests don't leak."""
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    old_level = root.level
+    yield
+    root.handlers = old_handlers
+    root.level = old_level

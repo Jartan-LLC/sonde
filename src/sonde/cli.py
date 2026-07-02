@@ -15,7 +15,7 @@ import sys
 
 from . import core, endpoint, phases
 from . import endpoints  # noqa: F401  (import registers all endpoints)
-from .logging import setup_logging
+from .logconfig import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,7 @@ def main(argv=None):
     try:
         run(args)
     except KeyboardInterrupt:
-        print("\ninterrupted.", file=sys.stderr)
+        logger.warning("interrupted.")
         sys.exit(130)
 
 
