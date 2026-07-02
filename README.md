@@ -111,7 +111,7 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 3. Decorate with `@register` and set a unique `name` (becomes the CLI subcommand).
 4. Override `_make_provider()` to return the appropriate `Provider` (or use the generic one for standard 200/429 + IETF headers).
 5. Optionally implement `total_items()` for scrape-time estimates, `add_arguments()` / `from_args()` for CLI options, and `extra_headers()` for endpoint-specific headers.
-6. If the endpoint is paginated, call `add_pagination_args(parser)` in `add_arguments()` and `pagination_from_args(args)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags.
+6. If the endpoint is paginated, call `add_pagination_args(parser, page_max=cls.MAX_PAGE)` in `add_arguments()` and `pagination_from_args(args, page_max=cls.MAX_PAGE)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags (clamped to your endpoint's cap).
 7. Import the new module in `src/sonde/endpoints/__init__.py` so it registers on package load.
 
 Minimal example:

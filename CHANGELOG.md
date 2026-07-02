@@ -34,7 +34,8 @@ Initial release.
 - Type annotations across the public API, with a PEP 561 `py.typed` marker so
   downstream type checkers see them.
 - Public extension API re-exported from the top-level `sonde` package
-  (`Endpoint`, `RequestSpec`, `PageResult`, `register`, `Provider`).
+  (`Endpoint`, `RequestSpec`, `PageResult`, `register`, `Provider`,
+  `add_pagination_args`, `pagination_from_args`).
 - Defined process exit codes: `0` success, `2` precondition failure (bad
   arguments, unwritable `--output`, or an unusable endpoint response), `1`
   unexpected crash, `130` interrupted.

@@ -129,24 +129,26 @@ def test_output_default():
     assert args.output == "sonde_report.json"
 
 
+def test_pagination_defaults():
+    args = build_parser().parse_args(["asset-owners", "--asset-id", "1"])
+    assert args.page_size == 100 and args.total_items is None
+
+
 def test_pagination_flags_consistent_across_endpoints():
-    """Every paginated endpoint spells the same knobs --page-size / --total-items."""
-    for argv in (
-        ["asset-owners", "--asset-id", "1", "--page-size", "25", "--total-items", "500"],
-        [
-            "github-stargazers",
-            "--owner",
-            "o",
-            "--repo",
-            "r",
-            "--page-size",
-            "25",
-            "--total-items",
-            "500",
-        ],
-    ):
-        a = build_parser().parse_args(argv)
-        assert a.page_size == 25 and a.total_items == 500
+    """Any registered endpoint that exposes pagination spells it as the paired
+    --page-size / --total-items, checked across every endpoint (not just two)."""
+    import argparse
+
+    from sonde import endpoint as endpoint_mod
+
+    for name, cls in endpoint_mod.all_endpoints().items():
+        p = argparse.ArgumentParser()
+        cls.add_arguments(p)
+        dests = {a.dest for a in p._actions}
+        if dests & {"page_size", "total_items"}:
+            assert {"page_size", "total_items"} <= dests, (
+                f"{name}: pagination flags must be the paired --page-size/--total-items"
+            )
 
 
 def test_burst_sizes_parses_to_list():
