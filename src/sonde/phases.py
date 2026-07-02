@@ -15,15 +15,22 @@ endpoint. Phases:
 `core.fetch` is referenced through the module (core.fetch) so tests can monkeypatch it.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import math
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+import requests
 
 from . import core
+from .core import Budget, Result
+from .endpoint import Endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +38,9 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Sanity / auth + header read
 # --------------------------------------------------------------------------- #
-def phase_sanity(session, endpoint, budget):
+def phase_sanity(
+    session: requests.Session, endpoint: Endpoint, budget: Budget
+) -> tuple[Result, dict[str, Any]]:
     logger.info("\n== PHASE: sanity / auth ==")
     r = core.fetch(session, endpoint, None, budget)
     if r.rclass == core.RClass.OK:
@@ -92,7 +101,9 @@ def phase_sanity(session, endpoint, budget):
 # --------------------------------------------------------------------------- #
 # Sequential sustained probe
 # --------------------------------------------------------------------------- #
-def phase_seq(session, endpoint, budget, cap):
+def phase_seq(
+    session: requests.Session, endpoint: Endpoint, budget: Budget, cap: int
+) -> tuple[dict[str, Any], list[Any]]:
     logger.info("\n== PHASE: sequential sustained probe ==")
     logger.info("  up to %s back-to-back requests until the first 429...", cap)
     cursor = None
@@ -160,8 +171,8 @@ def phase_seq(session, endpoint, budget, cap):
 # Recovery probe — shared logic + sync wrapper
 # --------------------------------------------------------------------------- #
 def _recovery_steps(
-    start_step: float, max_wait: float, max_polls: int, cursor_pool: list
-) -> Generator[tuple[float, object, float], None, None]:
+    start_step: float, max_wait: float, max_polls: int, cursor_pool: list[Any]
+) -> Generator[tuple[float, Any, float], None, None]:
     """Yield (step_seconds, cursor, cumulative_wait_s) for each recovery poll.
     Pure state machine — no I/O. Callers sleep then fetch after each yield."""
     step = start_step
@@ -177,7 +188,15 @@ def _recovery_steps(
         step *= 1.6
 
 
-def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wait, max_polls):
+def measure_recovery(
+    session: requests.Session,
+    endpoint: Endpoint,
+    budget: Budget,
+    cursor_pool: list[Any],
+    start_step: float,
+    max_wait: float,
+    max_polls: int,
+) -> float | None:
     """Geometric backoff: fine early (to catch a sub-second refill), widening so a
     long window still finishes within max_polls requests. Returns cumulative wait at
     first success, or None."""
@@ -205,16 +224,16 @@ def measure_recovery(session, endpoint, budget, cursor_pool, start_step, max_wai
 # Burst probe (threaded)
 # --------------------------------------------------------------------------- #
 def phase_burst(
-    session,
-    endpoint,
-    budget,
-    sizes,
-    cooldown,
-    cursor_pool,
-    recovery_step,
-    recovery_max,
-    recovery_polls,
-):
+    session: requests.Session,
+    endpoint: Endpoint,
+    budget: Budget,
+    sizes: list[int],
+    cooldown: float,
+    cursor_pool: list[Any],
+    recovery_step: float,
+    recovery_max: float,
+    recovery_polls: int,
+) -> tuple[list[dict[str, Any]], float | None]:
     logger.info("\n== PHASE: concurrent burst probe [threaded] ==")
     logger.info("  fires N truly-concurrent requests (pool sized to N); reports launch spread.")
     results = []
@@ -266,16 +285,16 @@ def phase_burst(
 # Burst probe (async httpx). Same behaviour; httpx imported lazily.
 # --------------------------------------------------------------------------- #
 def phase_burst_async(
-    headers,
-    endpoint,
-    budget,
-    sizes,
-    cooldown,
-    cursor_pool,
-    recovery_step,
-    recovery_max,
-    recovery_polls,
-):
+    headers: dict[str, str],
+    endpoint: Endpoint,
+    budget: Budget,
+    sizes: list[int],
+    cooldown: float,
+    cursor_pool: list[Any],
+    recovery_step: float,
+    recovery_max: float,
+    recovery_polls: int,
+) -> tuple[list[dict[str, Any]], float | None]:
     import httpx  # lazy: only needed for --use-httpx
 
     if not sizes:
@@ -373,7 +392,14 @@ def phase_burst_async(
     return asyncio.run(run())
 
 
-def _summarise_burst(n, batch, elapsed, spread_ms, measured_window, recovery_cb):
+def _summarise_burst(
+    n: int,
+    batch: list[Result],
+    elapsed: float,
+    spread_ms: float,
+    measured_window: float | None,
+    recovery_cb: Callable[[], float | None] | None,
+) -> tuple[float | None, dict[str, Any]]:
     """Shared burst bookkeeping for the threaded and async paths. If recovery_cb is
     given (sync path) it's called to measure the window on the first throttled burst."""
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
@@ -415,8 +441,15 @@ def _summarise_burst(n, batch, elapsed, spread_ms, measured_window, recovery_cb)
 # Sustained-interval sweep (fallback when headers are absent)
 # --------------------------------------------------------------------------- #
 def phase_sweep(
-    session, endpoint, budget, cursor_pool, intervals, probe_count, drain_cap, tolerance
-):
+    session: requests.Session,
+    endpoint: Endpoint,
+    budget: Budget,
+    cursor_pool: list[Any],
+    intervals: list[float],
+    probe_count: int,
+    drain_cap: int,
+    tolerance: float,
+) -> tuple[float | None, list[dict[str, Any]]]:
     """Find the fastest inter-request interval that stays 429-free at STEADY STATE.
     Drains the bucket first (rapid requests until empty), then paces `probe_count`
     requests from empty. A too-fast interval throttles immediately from empty; a
@@ -547,8 +580,15 @@ def phase_sweep(
 # Estimate
 # --------------------------------------------------------------------------- #
 def phase_estimate(
-    endpoint, page_count, seq_summary, burst_results, measured_window, swept_interval, margin, rl
-):
+    endpoint: Endpoint,
+    page_count: int,
+    seq_summary: dict[str, Any],
+    burst_results: list[dict[str, Any]],
+    measured_window: float | None,
+    swept_interval: float | None,
+    margin: float,
+    rl: dict[str, Any],
+) -> dict[str, Any]:
     logger.info("\n== PHASE: rate + wall-clock estimate ==")
 
     safe_rate_per_min = None

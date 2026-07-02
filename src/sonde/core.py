@@ -7,11 +7,14 @@ how to issue a request, time it, and hand the response to the endpoint's provide
 for classification and to the endpoint for item extraction.
 """
 
-import time
+from __future__ import annotations
+
 import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from http.cookiejar import DefaultCookiePolicy
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -37,7 +40,7 @@ class RClass(str, Enum):
     BUDGET = "budget"  # local request budget exhausted (not a server response)
 
 
-def default_rclass(status: int) -> "RClass":
+def default_rclass(status: int) -> RClass:
     """Fallback classification (also what the generic Provider uses)."""
     if status == 200:
         return RClass.OK
@@ -55,7 +58,7 @@ def default_rclass(status: int) -> "RClass":
 class Budget:
     max_requests: int
     used: int = 0
-    _lock: "threading.Lock" = field(default_factory=threading.Lock, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def take(self) -> bool:
         with self._lock:
@@ -72,7 +75,7 @@ class Budget:
 # --------------------------------------------------------------------------- #
 # Session
 # --------------------------------------------------------------------------- #
-def build_session(max_conns: int = 10, headers: dict = None) -> requests.Session:
+def build_session(max_conns: int = 10, headers: dict[str, str] | None = None) -> requests.Session:
     """Session with a pool sized to the largest burst and a no-write cookie jar
     (auth rides on headers, so the shared jar is never mutated -> thread-safe)."""
     s = requests.Session()
@@ -91,19 +94,19 @@ def build_session(max_conns: int = 10, headers: dict = None) -> requests.Session
 class Result:
     status: int
     elapsed: float
-    rclass: "RClass" = None  # defaults from status via default_rclass()
+    rclass: RClass | None = None  # defaults from status via default_rclass()
     count: int = 0
-    next_cursor: object = None
-    retry_after: float = None
-    headers: dict = field(default_factory=dict)
-    error: str = None
+    next_cursor: Any = None
+    retry_after: float | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    error: str | None = None
 
     def __post_init__(self):
         if self.rclass is None:
             self.rclass = default_rclass(self.status)
 
 
-def interesting_headers(resp) -> dict:
+def interesting_headers(resp: Any) -> dict[str, str]:
     return {
         k: v for k, v in resp.headers.items() if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
     }
@@ -112,7 +115,7 @@ def interesting_headers(resp) -> dict:
 _PARSE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
 
 
-def _parse_response(resp, elapsed, endpoint) -> Result:
+def _parse_response(resp: Any, elapsed: float, endpoint: Any) -> Result:
     """Classify via the endpoint's provider, then (on success) let the endpoint pull
     item count + next cursor from the FULL response (so header-based pagination and
     non-JSON bodies are possible)."""
@@ -146,7 +149,7 @@ def _parse_response(resp, elapsed, endpoint) -> Result:
     return res
 
 
-def fetch(session, endpoint, cursor, budget) -> Result:
+def fetch(session: requests.Session, endpoint: Any, cursor: Any, budget: Budget) -> Result:
     """One probe request for `endpoint` at pagination position `cursor`."""
     if not budget.take():
         return Result(

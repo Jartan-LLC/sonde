@@ -17,8 +17,11 @@ normalised rate-limit dict shape (all keys optional / may be None):
   * window_s may be None if the API doesn't express it and none is known.
 """
 
+from __future__ import annotations
+
 import os
 import time
+from typing import Any
 
 from .core import RClass
 
@@ -29,7 +32,7 @@ class Provider:
     name = "generic"
 
     # --- classification ---
-    def classify(self, resp) -> RClass:
+    def classify(self, resp: Any) -> RClass:
         sc = resp.status_code
         if sc == 200:
             return RClass.OK
@@ -38,7 +41,7 @@ class Provider:
         return RClass.ERROR
 
     # --- rate-limit header parsing (IETF RateLimit draft, e.g. Roblox) ---
-    def parse_rate_limit(self, headers: dict) -> dict:
+    def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit_raw = low.get("x-ratelimit-limit")
         if not limit_raw:
@@ -82,10 +85,10 @@ class Provider:
         }
 
     # --- auth ---
-    def auth_headers(self) -> dict:
+    def auth_headers(self) -> dict[str, str]:
         return {}
 
-    def auth_params(self) -> dict:
+    def auth_params(self) -> dict[str, str]:
         return {}
 
 
@@ -95,8 +98,8 @@ class RobloxProvider(Provider):
 
     name = "roblox"
 
-    def auth_headers(self) -> dict:
-        h = {}
+    def auth_headers(self) -> dict[str, str]:
+        h: dict[str, str] = {}
         cookie = os.environ.get("ROBLOX_COOKIE")
         bearer = os.environ.get("ROBLOX_BEARER")
         if cookie:
@@ -113,11 +116,11 @@ class GitHubProvider(Provider):
 
     name = "github"
 
-    def __init__(self, window_s=3600):
+    def __init__(self, window_s: int = 3600) -> None:
         # GitHub core API is 5000/hour; other resources differ (search=60s) -> override.
         self.window_s = window_s
 
-    def classify(self, resp) -> RClass:
+    def classify(self, resp: Any) -> RClass:
         sc = resp.status_code
         if sc == 200:
             return RClass.OK
@@ -131,7 +134,7 @@ class GitHubProvider(Provider):
             return RClass.THROTTLED
         return RClass.ERROR
 
-    def parse_rate_limit(self, headers: dict) -> dict:
+    def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit = _first_int(low.get("x-ratelimit-limit"))
         if limit is None:
@@ -147,7 +150,7 @@ class GitHubProvider(Provider):
             "raw": {k: v for k, v in low.items() if k.startswith("x-ratelimit")},
         }
 
-    def auth_headers(self) -> dict:
+    def auth_headers(self) -> dict[str, str]:
         h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         tok = os.environ.get("GITHUB_TOKEN")
         if tok:
@@ -155,7 +158,7 @@ class GitHubProvider(Provider):
         return h
 
 
-def _first_int(raw):
+def _first_int(raw: Any) -> int | None:
     if raw is None:
         return None
     try:

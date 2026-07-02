@@ -16,9 +16,12 @@ Plus optional CLI plumbing (add_arguments / from_args) and extra_headers().
 See endpoints/asset_owners.py for a worked example, and the README.
 """
 
+from __future__ import annotations
+
+import argparse
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any
 
 from .provider import Provider
 
@@ -28,9 +31,9 @@ class RequestSpec:
     """A single HTTP request to issue."""
 
     url: str
-    params: dict = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     method: str = "GET"
-    json_body: object = None
+    json_body: Any = None
 
 
 @dataclass
@@ -38,7 +41,7 @@ class PageResult:
     """What a successful response yielded."""
 
     count: int  # number of items in this response (0 if not a page)
-    next_cursor: object = None  # opaque token for the next page, or None if last/none
+    next_cursor: Any = None  # opaque token for the next page, or None if last/none
 
 
 class Endpoint(ABC):
@@ -47,11 +50,11 @@ class Endpoint(ABC):
 
     # --- CLI plumbing (override as needed) ---
     @classmethod
-    def add_arguments(cls, parser):
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Register endpoint-specific CLI arguments on `parser`."""
 
     @classmethod
-    def from_args(cls, args) -> "Endpoint":
+    def from_args(cls, args: argparse.Namespace) -> Endpoint:
         """Build an instance from parsed CLI args."""
         return cls()
 
@@ -71,22 +74,22 @@ class Endpoint(ABC):
 
     # --- required behaviour ---
     @abstractmethod
-    def build_request(self, cursor) -> RequestSpec: ...
+    def build_request(self, cursor: Any) -> RequestSpec: ...
 
     @abstractmethod
-    def parse_page(self, response) -> PageResult:
+    def parse_page(self, response: Any) -> PageResult:
         """Extract item count + next cursor from a successful RESPONSE object
         (requests.Response / httpx.Response). Call response.json() for JSON bodies;
         read response.headers for header-based pagination (e.g. a Link header)."""
         ...
 
     # --- optional behaviour ---
-    def total_items(self) -> Optional[int]:
+    def total_items(self) -> int | None:
         """Known/estimated total items to scrape, for the wall-clock estimate.
         Return None if unknown (the tool will then report rate only)."""
         return None
 
-    def extra_headers(self) -> dict:
+    def extra_headers(self) -> dict[str, str]:
         """Endpoint-specific headers beyond the provider's auth headers."""
         return {}
 
@@ -94,10 +97,10 @@ class Endpoint(ABC):
 # --------------------------------------------------------------------------- #
 # Registry: endpoints register themselves so the CLI can offer them as subcommands.
 # --------------------------------------------------------------------------- #
-_REGISTRY: dict = {}
+_REGISTRY: dict[str, type[Endpoint]] = {}
 
 
-def register(cls):
+def register(cls: type[Endpoint]) -> type[Endpoint]:
     """Class decorator: register an Endpoint subclass under its `name`."""
     if not getattr(cls, "name", None) or cls.name == "base":
         raise ValueError(f"{cls.__name__} must set a unique `name`")
@@ -107,9 +110,9 @@ def register(cls):
     return cls
 
 
-def get(name):
+def get(name: str) -> type[Endpoint] | None:
     return _REGISTRY.get(name)
 
 
-def all_endpoints() -> dict:
+def all_endpoints() -> dict[str, type[Endpoint]]:
     return dict(_REGISTRY)
