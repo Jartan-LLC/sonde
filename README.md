@@ -54,7 +54,11 @@ Anonymous probing (no auth) works too -- you'll just hit lower rate limits:
 sonde github-stargazers --owner torvalds --repo linux --total 190000
 ```
 
-Results are written to `sonde_report.json` (override with `--output`).
+Results are written to `sonde_report.json` by default:
+
+```bash
+sonde asset-owners --asset-id 20573078 --output my_report.json
+```
 
 ## How It Works
 
@@ -155,7 +159,7 @@ Common options shared by all endpoints:
 | `--sweep-count` | 20 | Paced requests per interval after draining |
 | `--sweep-drain` | 500 | Cap on rapid requests used to empty the bucket before each interval |
 | `--sweep-tolerance` | 0.1 | Max fraction of 429s for an interval to count as sustainable |
-| `--margin` | 0.8 | Safety margin applied to the recommended interval (0.8 = 25% slower than measured ceiling) |
+| `--margin` | 0.8 | Safety margin: pace at 80% of the measured max rate (0.8 = 25% slower than ceiling) |
 | `--output` | `sonde_report.json` | Path for the JSON report |
 
 ## Docker
