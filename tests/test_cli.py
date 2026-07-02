@@ -285,11 +285,8 @@ def test_log_format_json_verbose_throttle(clock, tmp_path, monkeypatch, capfd, r
     ]
     cli.main(argv)
     captured = capfd.readouterr()
+    _assert_all_stderr_json(captured)
     lines = [line for line in captured.err.strip().split("\n") if line.strip()]
-    assert len(lines) > 0
-    for line in lines:
-        parsed = json.loads(line)
-        assert "timestamp" in parsed
     debug_lines = [line for line in lines if json.loads(line)["level"] == "DEBUG"]
     assert len(debug_lines) > 0, "no DEBUG lines emitted — -v flag not working"
 
@@ -307,6 +304,85 @@ def test_log_format_json_abort_path(tmp_path, monkeypatch, capfd, restore_root_l
         "asset-owners",
         "--asset-id",
         "20573078",
+        "--output",
+        str(out),
+        "--log-format",
+        "json",
+    ]
+    cli.main(argv)
+    _assert_all_stderr_json(capfd.readouterr())
+
+
+# Headers with limit but no window — triggers "present but no window" branch
+RLH_NO_WINDOW = {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99"}
+
+
+def test_log_format_json_limit_no_window(clock, tmp_path, monkeypatch, capfd, restore_root_logger):
+    """Exercises 'rate-limit headers present but no window' format strings."""
+    monkeypatch.setattr(core, "fetch", make_bucket(0.05, 30, headers=RLH_NO_WINDOW))
+    out = tmp_path / "report.json"
+    argv = [
+        "asset-owners",
+        "--asset-id",
+        "20573078",
+        "--seq-cap",
+        "10",
+        "--skip-burst",
+        "--sweep-intervals",
+        "0.2,0.1,0.05,0.03",
+        "--sweep-count",
+        "12",
+        "--sweep-drain",
+        "500",
+        "--output",
+        str(out),
+        "--log-format",
+        "json",
+    ]
+    cli.main(argv)
+    _assert_all_stderr_json(capfd.readouterr())
+
+
+def test_log_format_json_budget_exhaustion(tmp_path, monkeypatch, capfd, restore_root_logger):
+    """Exercises budget-exhaustion warning format strings in seq phase."""
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    out = tmp_path / "report.json"
+    argv = [
+        "asset-owners",
+        "--asset-id",
+        "20573078",
+        "--max-requests",
+        "5",
+        "--seq-cap",
+        "10",
+        "--skip-burst",
+        "--skip-sweep",
+        "--output",
+        str(out),
+        "--log-format",
+        "json",
+    ]
+    cli.main(argv)
+    _assert_all_stderr_json(capfd.readouterr())
+
+
+def test_log_format_json_drain_failure(clock, tmp_path, monkeypatch, capfd, restore_root_logger):
+    """Exercises drain-failure warning format strings in sweep phase."""
+    monkeypatch.setattr(core, "fetch", make_bucket(0.001, 10000, headers={"server": "x"}))
+    out = tmp_path / "report.json"
+    argv = [
+        "asset-owners",
+        "--asset-id",
+        "20573078",
+        "--seq-cap",
+        "5",
+        "--skip-burst",
+        "--sweep-intervals",
+        "0.1",
+        "--sweep-count",
+        "5",
+        "--sweep-drain",
+        "50",
         "--output",
         str(out),
         "--log-format",

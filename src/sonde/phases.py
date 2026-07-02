@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import time
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 
 from . import core
@@ -156,7 +157,9 @@ def phase_seq(session, endpoint, budget, cap):
 # --------------------------------------------------------------------------- #
 # Recovery probe — shared logic + sync wrapper
 # --------------------------------------------------------------------------- #
-def _recovery_steps(start_step, max_wait, max_polls, cursor_pool):
+def _recovery_steps(
+    start_step: float, max_wait: float, max_polls: int, cursor_pool: list
+) -> Generator[tuple[float, object, float], None, None]:
     """Yield (step_seconds, cursor, cumulative_wait_s) for each recovery poll.
     Pure state machine — no I/O. Callers sleep then fetch after each yield."""
     step = start_step
