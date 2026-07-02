@@ -168,7 +168,7 @@ def phase_seq(
 
 
 # --------------------------------------------------------------------------- #
-# Recovery probe — shared backoff generator (async burst path measures inline)
+# Recovery probe — backoff generator (the async burst measures the window inline)
 # --------------------------------------------------------------------------- #
 def _recovery_steps(
     start_step: float, max_wait: float, max_polls: int, cursor_pool: list[Any]
