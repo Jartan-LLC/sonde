@@ -12,12 +12,6 @@ Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Pro
 pip install sonde
 ```
 
-With optional async burst support (httpx):
-
-```bash
-pip install 'sonde[httpx]'
-```
-
 From source:
 
 ```bash
@@ -68,7 +62,7 @@ Sonde runs five phases against the target endpoint, then combines the measuremen
 |---|---|
 | **Sanity** | One request. Validates auth, reads rate-limit response headers (e.g. `x-ratelimit-limit`, `x-ratelimit-remaining`), and records items-per-page for the scrape-time estimate. |
 | **Sequential** | Fires back-to-back requests (up to `--seq-cap`, default 150) until the first 429 or the cap. Measures baseline throughput and how many requests the API allows before throttling. |
-| **Burst** | Fires N truly-concurrent requests (default sizes: 10, 20, 40, 80) using a thread pool (or async httpx with `--use-httpx`). After the first throttled burst, measures the **recovery window** -- how long until requests succeed again -- via adaptive geometric backoff. |
+| **Burst** | Fires N truly-concurrent requests (default sizes: 10, 20, 40, 80) via httpx on a single asyncio event loop. After the first throttled burst, measures the **recovery window** -- how long until requests succeed again -- via adaptive geometric backoff. |
 | **Sweep** | Drains the rate-limit bucket, then paces requests at progressively faster intervals (default: 8s down to 0.15s) to find the fastest sustainable interval from empty. Skipped by default when authoritative rate-limit headers are present (override with `--force-sweep`). |
 | **Estimate** | Combines all measurements into a recommended request interval and, if a total item count is known, a wall-clock full-scrape estimate. |
 
@@ -147,7 +141,6 @@ Common options shared by all endpoints:
 | `--max-requests` | 1200 | Hard global cap across all phases (safety budget) |
 | `--seq-cap` | 150 | Max sequential requests before stopping |
 | `--skip-burst` | off | Skip the concurrent burst phase |
-| `--use-httpx` | off | Use async httpx for bursts instead of threaded requests (requires `pip install 'sonde[httpx]'`; falls back to threaded if missing) |
 | `--burst-sizes` | `10,20,40,80` | Comma-separated list of concurrent burst sizes |
 | `--burst-cooldown` | 60.0 | Fallback seconds between bursts if the recovery window can't be measured |
 | `--recovery-step` | 0.25 | Initial poll delay when measuring the throttle window (grows geometrically) |

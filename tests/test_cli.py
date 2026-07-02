@@ -6,7 +6,7 @@ import pytest
 
 from sonde import cli, core
 from sonde.cli import build_parser
-from tests.helpers import RLH_420, make_bucket
+from tests.helpers import RLH_420, make_bucket, make_burst_handler
 
 
 # --------------------------------------------------------------------------- #
@@ -95,14 +95,6 @@ def test_run_headerless_runs_sweep(clock, tmp_path, monkeypatch):
     assert report["swept_floor_interval_s"] == 0.05
     assert report["estimate"]["header_limit"] is None
     assert "measured floor" in report["estimate"]["safe_rate_basis"]
-
-
-def test_run_httpx_flag_falls_back_when_missing(tmp_path, monkeypatch):
-    # httpx isn't installed in the test env, so --use-httpx must fall back to threaded.
-    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
-    args, out = _args(tmp_path, "--use-httpx")
-    report = cli.run(args)
-    assert report["burst_impl"] == "threaded (httpx fallback)"
 
 
 def test_run_aborts_on_non_200(tmp_path, monkeypatch):
@@ -266,9 +258,15 @@ def test_log_format_json_sweep_path(clock, tmp_path, monkeypatch, capfd, restore
     _assert_all_stderr_json(capfd.readouterr())
 
 
-def test_log_format_json_verbose_throttle(clock, tmp_path, monkeypatch, capfd, restore_root_logger):
-    """Exercises DEBUG format strings (headers, throttle headers, cooldown) via -v."""
+def test_log_format_json_verbose_throttle(
+    clock, tmp_path, monkeypatch, capfd, restore_root_logger, burst_transport
+):
+    """Exercises DEBUG format strings (headers, throttle headers) plus the burst
+    server-window branch via -v. The burst 429s with a Retry-After so the window is
+    read from the header and the async recovery poll (which sleeps on asyncio, not the
+    virtual clock) is skipped."""
     monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 5, 5, headers=RLH_420))
+    burst_transport(make_burst_handler(decider=lambda: False, retry_after=3))
     out = tmp_path / "report.json"
     argv = [
         "asset-owners",

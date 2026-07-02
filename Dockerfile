@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 
-RUN pip install --no-cache-dir '.[httpx]'
+RUN pip install --no-cache-dir .
 
 RUN useradd --create-home sonde
 USER sonde

@@ -39,12 +39,6 @@ def build_common_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--skip-burst", action="store_true")
     g.add_argument(
-        "--use-httpx",
-        action="store_true",
-        help="run the burst phase on async httpx instead of threaded requests "
-        "(needs: pip install httpx; falls back to threaded if missing)",
-    )
-    g.add_argument(
         "--burst-sizes", default="10,20,40,80", help="comma list of concurrent burst sizes"
     )
     g.add_argument(
@@ -193,54 +187,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     seq_summary, cursor_pool = phases.phase_seq(session, ep, budget, args.seq_cap)
     report["sequential"] = seq_summary
 
-    burst_results, measured_window, burst_impl = [], None, None
+    burst_results, measured_window = [], None
     if not args.skip_burst:
-        if args.use_httpx:
-            try:
-                burst_results, measured_window = phases.phase_burst_async(
-                    headers,
-                    ep,
-                    budget,
-                    burst_sizes,
-                    args.burst_cooldown,
-                    cursor_pool,
-                    args.recovery_step,
-                    args.recovery_max,
-                    args.recovery_polls,
-                )
-                burst_impl = "httpx"
-            except ImportError:
-                logger.warning(
-                    "\n[!] --use-httpx set but httpx isn't installed "
-                    "(pip install httpx); falling back to the threaded requests burst."
-                )
-                burst_results, measured_window = phases.phase_burst(
-                    session,
-                    ep,
-                    budget,
-                    burst_sizes,
-                    args.burst_cooldown,
-                    cursor_pool,
-                    args.recovery_step,
-                    args.recovery_max,
-                    args.recovery_polls,
-                )
-                burst_impl = "threaded (httpx fallback)"
-        else:
-            burst_results, measured_window = phases.phase_burst(
-                session,
-                ep,
-                budget,
-                burst_sizes,
-                args.burst_cooldown,
-                cursor_pool,
-                args.recovery_step,
-                args.recovery_max,
-                args.recovery_polls,
-            )
-            burst_impl = "threaded"
+        burst_results, measured_window = phases.phase_burst(
+            headers,
+            ep,
+            budget,
+            burst_sizes,
+            args.burst_cooldown,
+            cursor_pool,
+            args.recovery_step,
+            args.recovery_max,
+            args.recovery_polls,
+        )
     report["burst"] = burst_results
-    report["burst_impl"] = burst_impl
     report["measured_window_seconds"] = measured_window
 
     swept_interval, sweep_rows = None, []

@@ -110,27 +110,12 @@ def test_summarise_burst_counts():
     batch = [core.Result(200, 0.01) for _ in range(7)] + [
         core.Result(429, 0.01, retry_after=5.0) for _ in range(3)
     ]
-    mw, row = phases._summarise_burst(
-        10, batch, elapsed=0.2, spread_ms=4.0, measured_window=None, recovery_cb=lambda: 12.0
-    )
+    row = phases._summarise_burst(10, batch, elapsed=0.2, spread_ms=4.0)
     assert row["ok_200"] == 7
     assert row["throttled_429"] == 3
     assert row["max_retry_after"] == 5.0
-    # first throttled burst with a Retry-After present -> window taken from it
-    assert mw == 5.0
-
-
-def test_summarise_burst_recovery_callback():
-    batch = [core.Result(429, 0.01) for _ in range(5)]  # no Retry-After
-    called = {"n": 0}
-
-    def cb():
-        called["n"] += 1
-        return 8.0
-
-    mw, row = phases._summarise_burst(5, batch, 0.1, 2.0, measured_window=None, recovery_cb=cb)
-    assert called["n"] == 1  # recovery measured because no Retry-After
-    assert mw == 8.0
+    # window decision (Retry-After vs adaptive recovery) lives at the async call
+    # site now, so it's exercised in test_burst.py, not here.
 
 
 # --------------------------------------------------------------------------- #
@@ -256,27 +241,3 @@ def test_recovery_steps_geometric_backoff():
     # per-poll step grows by the 1.6 factor
     sizes = [s for s, _, _ in steps]
     assert sizes[1] == pytest.approx(sizes[0] * 1.6)
-
-
-def test_measure_recovery_returns_cumulative_wait(clock, monkeypatch, fake_endpoint):
-    """measure_recovery returns the cumulative wait at the first success (429 for
-    the first two polls, OK on the third)."""
-    calls = {"n": 0}
-
-    def fake_fetch(session, ep, cursor, budget):
-        budget.take()
-        calls["n"] += 1
-        ok = calls["n"] >= 3
-        return core.Result(status=200 if ok else 429, elapsed=0.0, count=100 if ok else 0)
-
-    monkeypatch.setattr(core, "fetch", fake_fetch)
-    waited = phases.measure_recovery(
-        None,
-        fake_endpoint,
-        core.Budget(100),
-        cursor_pool=["a", "b"],
-        start_step=0.25,
-        max_wait=90.0,
-        max_polls=15,
-    )
-    assert waited == pytest.approx(1.29, abs=1e-9)  # 0.25 + 0.4 + 0.64
