@@ -5,7 +5,15 @@
 #
 # Only the gate's own tools belong here. The project's toolchain (ruff, pytest)
 # stays in pyproject.toml's dev extras with a version bound, and CI installs it
-# with `pip install -e '.[dev]'`.
+# with `uv pip install -e '.[dev]'`.
+#
+# uv is the installer everywhere -- CI, the devcontainer and the Dockerfile --
+# and the build frontend (`uv build`, which replaced `python -m build`). The pin
+# below is the one every Python environment reads: ci.yml's setup-uv step takes
+# it via `version-file: ci/requirements.txt`, and post-create.sh greps it, so
+# one Dependabot PR moves both at once. The Dockerfile is the exception -- it
+# pins the uv container image, which Dependabot's docker ecosystem bumps on its
+# own schedule, so those two versions can sit a week apart.
 
-build==1.5.0  # PEP 517 frontend for `python -m build`
+uv==0.12.5    # installer, resolver, venv manager and build frontend
 twine==7.0.0  # sdist/wheel metadata check before publish

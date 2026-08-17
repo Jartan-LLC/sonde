@@ -3,10 +3,13 @@
 ## Setup
 
 ```bash
-pip install -e '.[dev]'
+uv pip install -e '.[dev]'
 ```
 
-Requires Python 3.12+.
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/getting-started/installation/),
+which is this project's installer, resolver and build frontend in place of pip. Run it
+inside a virtualenv (`uv venv && source .venv/bin/activate`), or pass `--system` to
+install into the active interpreter -- uv refuses a non-venv target otherwise.
 
 ## Verify before opening a PR
 
@@ -16,7 +19,7 @@ ruff format --check .
 pytest
 ```
 
-CI runs the same checks plus a Docker build and a `python -m build` / `twine check` of the
+CI runs the same checks plus a Docker build and a `uv build` / `twine check` of the
 distribution. All must pass before merge.
 
 ## Adding an endpoint
