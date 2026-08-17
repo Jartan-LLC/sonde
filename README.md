@@ -119,6 +119,7 @@ Minimal example:
 ```python
 from sonde import Endpoint, RequestSpec, PageResult, register
 
+
 @register
 class MyEndpoint(Endpoint):
     name = "my-endpoint"
