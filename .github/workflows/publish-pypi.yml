@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
 
-      - run: pip install build twine
+      - run: pip install -r ci/requirements.txt
 
       - run: python -m build
 
