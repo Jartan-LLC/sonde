@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# uv installs everything here, in place of pip. `--system` on every call would
+# say the same thing at every call site, so it is set once: uv targets the
+# interpreter actions/setup-python put on PATH rather than demanding a virtualenv.
+env:
+  UV_SYSTEM_PYTHON: 1
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -32,12 +38,23 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+
+      # uv's own version is read from ci/requirements.txt, the file that already
+      # pins every other tool the gate installs -- so Dependabot's "/ci" entry
+      # bumps uv too, and the runner and devcontainer never drift apart. Without
+      # `version-file` this action installs uv `latest`, which is the
+      # unpinned-CI-tool failure PR #23 closed. Its cache replaces
+      # setup-python's `cache: pip`: it keys off pyproject.toml and
+      # ci/requirements.txt by default, and it caches uv's own wheel store,
+      # which is what the install actually reads.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: ci/requirements.txt
+          enable-cache: true
 
       # ruff comes from the dev extras, where it carries a version bound, rather
-      # than from a bare `pip install ruff` that resolved to the day's release.
-      - run: pip install -e '.[dev]'
+      # than from a bare `uv pip install ruff` that resolved to the day's release.
+      - run: uv pip install -e '.[dev]'
       - run: ruff check . && ruff format --check .
 
   test:
@@ -53,9 +70,15 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e '.[dev]' && pytest
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: ci/requirements.txt
+          enable-cache: true
+          # One cache per interpreter: the matrix legs resolve different wheels.
+          cache-suffix: py${{ matrix.python-version }}
+
+      - run: uv pip install -e '.[dev]' && pytest
 
   build:
     runs-on: ubuntu-24.04
@@ -63,13 +86,22 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # No dependency cache: this job only installs the pinned CI tools (nothing
+      # from pyproject), and `uv build` builds the project in its own isolated env.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -r ci/requirements.txt
-      - run: python -m build
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version-file: ci/requirements.txt
+
+      # `uv build` replaces `python -m build` and does the same thing -- resolve
+      # the declared build backend into an isolated env, build the sdist, then
+      # build the wheel from it -- so `build` left ci/requirements.txt. twine
+      # stays: uv has no equivalent metadata check.
+      - run: uv pip install -r ci/requirements.txt
+      - run: uv build
       - run: python -m twine check dist/*
 
   docker:
