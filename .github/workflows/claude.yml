@@ -42,6 +42,18 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           token: ${{ steps.app-token.outputs.token }}
 
+      # A bare URL in plugin_marketplaces resolves to grimoire's default branch
+      # at job time, and its plugins run node on SessionStart/PreToolUse without
+      # a prompt. The input takes no ref, so pin via a local path instead.
+      # Bump in step with .claude/settings.json.
+      - name: Fetch the grimoire marketplace at a pinned tag
+        env:
+          GRIMOIRE_REF: marketplace-v1.0.0
+        run: |
+          git clone --depth 1 --branch "$GRIMOIRE_REF" \
+            https://github.com/Jartan-LLC/grimoire.git "$RUNNER_TEMP/grimoire"
+          git -C "$RUNNER_TEMP/grimoire" rev-parse HEAD
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@b259b17e5c7712b3d7f2946b0096d3337fbbcbf1 # v1.0.148
@@ -49,19 +61,19 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
 
+          # The pinned clone from the step above. caveman is gone (third-party,
+          # unpinned, auto-running hooks, no named use here), and so are
+          # claude-plugins-official, which nothing installed from, and
+          # memoria@grimoire, which grimoire no longer ships.
           plugin_marketplaces: |
-            https://github.com/anthropics/claude-plugins-official.git
-            https://github.com/Jartan-LLC/grimoire.git
-            https://github.com/JuliusBrussee/caveman.git
+            ${{ runner.temp }}/grimoire
 
           plugins: |
             claudivis@grimoire
             gitwise@grimoire
-            memoria@grimoire
             praxis@grimoire
             pythonica@grimoire
             recursio@grimoire
-            caveman@caveman
 
           claude_args: |
             --model claude-opus-4-6
