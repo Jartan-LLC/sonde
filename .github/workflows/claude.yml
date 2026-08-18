@@ -19,10 +19,13 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # JAR-687: issues/issue_comment/pull_request_review(_comment) content can be
+    # authored by any GitHub account or machine principal, so this run must not
+    # hold write capability — no association class discriminates that (JAR-681).
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
+      pull-requests: read
+      issues: read
       id-token: write
       actions: read
     steps:
@@ -34,12 +37,17 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: read
+          permission-pull-requests: read
 
+      # head_ref is empty for these triggers, so this resolves to the default
+      # branch — never fork-PR code. Avoids CodeQL's untrusted-checkout flag.
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.ref_name }}
           token: ${{ steps.app-token.outputs.token }}
 
       # A bare URL in plugin_marketplaces resolves to grimoire's default branch
@@ -77,4 +85,3 @@ jobs:
 
           claude_args: |
             --model claude-opus-4-6
-            --dangerously-skip-permissions
