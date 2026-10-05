@@ -21,8 +21,8 @@ loads them into every session:
 
 ## Verify
 
-Run `make check` before declaring work done — it runs every CI check (lint, test,
-build, audit):
+Run `make check` before declaring work done — it runs the CI checks that need no Docker
+(lint, test, build, audit):
 
 ```bash
 make check

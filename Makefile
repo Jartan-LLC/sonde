@@ -58,7 +58,7 @@ test:  ## Run the unit suite (matches CI: excludes integration-marked tests)
 test-integration:  ## Run only integration-marked tests
 	pytest -m integration
 
-check:  ## Run every CI check (lint, test, build, audit)
+check:  ## Run the CI checks that need no Docker (lint, test, build, audit)
 	$(MAKE) lint test
 	uv build
 	python -m twine check dist/*

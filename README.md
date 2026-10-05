@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sonde)](https://pypi.org/project/sonde/)
 [![CI](https://github.com/Jartan-LLC/sonde/actions/workflows/ci.yml/badge.svg)](https://github.com/Jartan-LLC/sonde/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/Jartan-LLC/sonde/blob/main/LICENSE)
 
 Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Provider-pluggable, safe by default.
 
@@ -206,4 +206,4 @@ Setup and the checks to run before a pull request are in
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Jartan-LLC/sonde/blob/main/LICENSE)
