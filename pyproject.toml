@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.32.4,<2"] # latest; >=1.22 is the PEP 639 license-files floor
+requires = ["hatchling>=1.32.4,<2"] # PEP 639 license files need >=1.22
 build-backend = "hatchling.build"
 
 [project]
@@ -74,6 +74,5 @@ line-length = 100
 select = ["E", "F", "W", "I"]
 
 [tool.codespell]
-# Skip generated/legal/vendored text. Add false positives via:
-#   ignore-words-list = "word1,word2"
+# Skip generated, legal and vendored text.
 skip = "./.git,./.venv,./node_modules,./dist,./build,./docs/_build,*.egg-info,*.lock,*-lock.json,LICENSE*"

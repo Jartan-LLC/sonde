@@ -9,16 +9,6 @@ loads them into every session:
 
 @GUARDRAILS.md
 
-## Corrections
-
-<!-- Version mismatches are the most common — fill these in early.
-"We use Pydantic v2 field_validator, not v1 validator."
-"Next.js 15 uses async cookies() — not the sync API from v14." -->
-
-## Skills
-
-<!-- Add project-specific skills and conventions here as they develop. -->
-
 ## Verify
 
 Run `make check` before declaring work done — it runs CI's lint, test, build and audit

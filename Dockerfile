@@ -4,7 +4,7 @@ FROM ghcr.io/astral-sh/uv:0.12.23 AS uv-bin
 FROM python:3.12-slim AS base
 COPY --from=uv-bin /uv /uvx /bin/
 
-# Unbuffered stdout/stderr so logs aren't lost to block-buffering on a hard crash.
+# Unbuffered stdout, so output reaches docker logs at once and a killed process loses none.
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app

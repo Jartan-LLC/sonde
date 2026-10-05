@@ -1,4 +1,4 @@
-# Dependencies
+# Dependencies, caches and build artifacts
 node_modules/
 .pnpm-store/
 __pycache__/
@@ -39,9 +39,6 @@ htmlcov/
 
 # Docs build output (Sphinx)
 docs/_build/
-
-# Docker
-/data/
 
 # Logs
 *.log
