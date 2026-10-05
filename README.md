@@ -201,17 +201,8 @@ The container writes `sonde_report.json` to `/data` (the mounted volume).
 
 ## Development
 
-```bash
-pip install -e '.[dev]'
-```
-
-Run tests and linting:
-
-```bash
-pytest
-ruff check .
-ruff format --check .
-```
+Setup and the checks to run before a pull request are in
+[CONTRIBUTING.md](https://github.com/Jartan-LLC/sonde/blob/main/CONTRIBUTING.md).
 
 ## License
 
