@@ -4,41 +4,19 @@ Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Pyt
 
 ## Rules
 
-### Always
-- Read README.md and relevant docs before modifying unfamiliar code
-- Run Verify commands before declaring work done
-- Update docs and skills alongside code changes
-- Write plans to `.claude/workspace/` in the project root for non-trivial changes
+The project rules live in `GUARDRAILS.md`, ranked by how firmly each holds; this import
+loads them into every session:
 
-### Anti-patterns
-- Don't wrap things the underlying library already expresses clearly
-- Don't speculate about fixes — investigate first, then propose
-- Don't hardcode derived counts in comments — they drift silently
-- Don't put paragraph-length inline comments in CI/config files
-
-### Ask first
-- Changing public API signatures or database schemas
-- Deleting files or removing features
-
-### Never
-- Commit or push unless explicitly asked or instructed by a command
-- Add dependencies without stating the reason
-- Put secrets or credentials in tracked files
-
-## Corrections
-
-<!-- Version mismatches are the most common — fill these in early.
-"We use Pydantic v2 field_validator, not v1 validator."
-"Next.js 15 uses async cookies() — not the sync API from v14." -->
-
-## Skills
-
-<!-- Add project-specific skills and conventions here as they develop. -->
+@GUARDRAILS.md
 
 ## Verify
 
+Run `make check` before declaring work done — it runs CI's lint, test, build and audit
+checks:
+
 ```bash
-ruff check .
-ruff format --check .
-pytest
+make check
 ```
+
+Individual targets (`make lint`, `make test`, …) speed up the inner loop; `make help`
+lists them.

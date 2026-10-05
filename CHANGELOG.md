@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python 3.14 support.
+
+### Changed
+
+- The source distribution ships the whole test suite, including `tests/conftest.py` and
+  `tests/helpers.py`.
+
 ## [0.1.0] - 2026-07-02
 
 Initial release.

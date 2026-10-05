@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=77.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.32.4,<2"]
+build-backend = "hatchling.build"
 
 [project]
 name = "sonde"
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Testing",
@@ -35,9 +36,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ruff and codespell are versioned by their hook revs in .pre-commit-config.yaml.
 dev = [
     "pytest>=7.0,<10",
-    "ruff>=0.16.3,<1",
 ]
 
 [project.scripts]
@@ -49,14 +50,16 @@ Repository = "https://github.com/Jartan-LLC/sonde"
 Issues = "https://github.com/Jartan-LLC/sonde/issues"
 Changelog = "https://github.com/Jartan-LLC/sonde/blob/main/CHANGELOG.md"
 
-[tool.setuptools.dynamic]
-version = {attr = "sonde.__version__"}
+[tool.hatch.version]
+path = "src/sonde/__init__.py"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# Hatchling ships the package's non-.py files (the py.typed PEP 561 marker)
+# automatically.
+[tool.hatch.build.targets.wheel]
+packages = ["src/sonde"]
 
-[tool.setuptools.package-data]
-sonde = ["py.typed"]
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "CHANGELOG.md", "CONTRIBUTING.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -69,3 +72,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+[tool.codespell]
+# Skip generated, legal and vendored text.
+skip = "./.git,./.venv,./node_modules,./dist,./build,./docs/_build,*.egg-info,*.lock,*-lock.json,LICENSE*"

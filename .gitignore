@@ -1,11 +1,14 @@
-# Dependencies
+# Dependencies, caches and build artifacts
 node_modules/
+.pnpm-store/
 __pycache__/
 *.py[cod]
 *.egg-info/
-.eggs/
-dist/
-build/
+# Leading / matches the root only, so same-named source dirs elsewhere are tracked and packaged
+/.eggs/
+/dist/
+/build/
+*.whl
 
 # Environment
 .env
@@ -27,22 +30,19 @@ Thumbs.db
 
 # Testing / Coverage
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .pytest_cache/
 .mypy_cache/
-
-# Docker
-data/
-
-# Ruff
 .ruff_cache/
 
-# Distribution
-*.whl
+# Docs build output (Sphinx)
+docs/_build/
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Claude workspace (plans, scratch files)
 .claude/workspace/*
@@ -50,3 +50,15 @@ logs/
 
 # Claude local settings (user-specific)
 .claude/settings.local.*
+
+# Liza: runtime state, the local contract link, provider key files, and the indexes its
+# git hooks regenerate after each commit
+.liza/
+.worktrees/
+.adversarial/
+CLAUDE.local.md
+stacklit.json
+/*.scip
+functional-clusters.json
+claude.env
+pi.env

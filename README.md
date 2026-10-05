@@ -2,7 +2,8 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sonde)](https://pypi.org/project/sonde/)
 [![CI](https://github.com/Jartan-LLC/sonde/actions/workflows/ci.yml/badge.svg)](https://github.com/Jartan-LLC/sonde/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Jartan-LLC/sonde/badge)](https://scorecard.dev/viewer/?uri=github.com/Jartan-LLC/sonde)
+[![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/Jartan-LLC/sonde/blob/main/LICENSE)
 
 Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Provider-pluggable, safe by default.
 
@@ -201,18 +202,9 @@ The container writes `sonde_report.json` to `/data` (the mounted volume).
 
 ## Development
 
-```bash
-pip install -e '.[dev]'
-```
-
-Run tests and linting:
-
-```bash
-pytest
-ruff check .
-ruff format --check .
-```
+Setup and the checks to run before a pull request are in
+[CONTRIBUTING.md](https://github.com/Jartan-LLC/sonde/blob/main/CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Jartan-LLC/sonde/blob/main/LICENSE)
