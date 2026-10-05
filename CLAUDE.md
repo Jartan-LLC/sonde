@@ -4,8 +4,7 @@ Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time. Pyt
 
 ## Rules
 
-The project rules live in `GUARDRAILS.md`, ranked by how firmly each holds; this import
-loads them into every session:
+The project rules are in `GUARDRAILS.md`:
 
 @GUARDRAILS.md
 
