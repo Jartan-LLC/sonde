@@ -32,9 +32,6 @@ every Claude Code session loads it; Liza agents also enforce the tiers (Liza's `
 - Comments state only the load-bearing why. Rationale goes in the commit message; a PR
   body carries only the gotchas.
 
-## Tier 3 (Preferences)
-<!-- Degraded gracefully. -->
-
 ---
 
 <!-- Liza agents recite this word to prove they read the file (see Liza's CORE.md). Keep it. -->
