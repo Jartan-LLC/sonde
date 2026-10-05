@@ -21,9 +21,9 @@ Docker (actionlint, lychee) and Node (markdownlint) — the devcontainer has bot
 make check
 ```
 
-Runs CI's lint, test, build and audit checks. CI also runs the tests on each supported
-Python and builds the Docker image and the dev container; all but the audit, which is
-advisory, must pass before merge.
+Runs CI's lint, test, build and audit checks; all but the advisory audit must pass before
+merge. CI also runs the tests on each supported Python, builds the Docker image, and builds
+the dev container when its inputs change.
 
 ## Adding an endpoint
 

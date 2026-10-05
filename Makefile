@@ -1,5 +1,5 @@
 # Task runner for the local dev loop. Run `make` or `make help` to list targets.
-.PHONY: help install lint fix test test-integration check all
+.PHONY: help install lint fix test check all
 
 # Every target uses one Python environment, chosen here: this
 # checkout's .venv, else the active one, else, in the main checkout only, the system
@@ -52,11 +52,8 @@ fix:  ## Apply ruff's safe fixes and formatting via its pre-commit hooks (git-tr
 	pre-commit run ruff-check --all-files || pre-commit run ruff-check --all-files
 	pre-commit run ruff-format --all-files || pre-commit run ruff-format --all-files
 
-test:  ## Run the unit suite (matches CI: excludes integration-marked tests)
-	pytest -m "not integration"
-
-test-integration:  ## Run only integration-marked tests
-	pytest -m integration
+test:  ## Run the test suite
+	pytest
 
 check:  ## Run CI's lint, test, build and audit checks
 	$(MAKE) lint test
