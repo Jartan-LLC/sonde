@@ -22,7 +22,8 @@ make check
 ```
 
 Runs CI's lint, test, build and audit checks. CI also runs the tests on each supported
-Python and builds the Docker image and the dev container; all must pass before merge.
+Python and builds the Docker image and the dev container; all but the audit, which is
+advisory, must pass before merge.
 
 ## Adding an endpoint
 
