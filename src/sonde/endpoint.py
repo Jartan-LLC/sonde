@@ -130,20 +130,20 @@ def register[E: type[Endpoint]](cls: E) -> E:
     return cls
 
 
-def _registry() -> dict[str, type[Endpoint]]:
+def _loaded_registry() -> dict[str, type[Endpoint]]:
     """Return the registry, once the built-in endpoints have registered themselves."""
     importlib.import_module("sonde.endpoints")
     return _REGISTRY
 
 
 def get(name: str) -> type[Endpoint] | None:
-    """Return the endpoint registered under `name`, or None."""
-    return _registry().get(name)
+    """Return the endpoint registered under `name`, built-ins included, or None."""
+    return _loaded_registry().get(name)
 
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
     """Return every registered endpoint, built-in or imported, by name."""
-    return dict(_registry())
+    return dict(_loaded_registry())
 
 
 # --------------------------------------------------------------------------- #

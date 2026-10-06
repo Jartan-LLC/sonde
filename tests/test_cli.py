@@ -13,6 +13,7 @@ import pytest
 from sonde import cli, core, endpoint
 from sonde.cli import build_parser
 from sonde.endpoint import Endpoint
+from sonde.provider import RobloxProvider
 from tests.helpers import RLH_420, FakeClock, Handler, make_bucket, make_burst_handler
 
 
@@ -39,6 +40,31 @@ def test_cli_registers_endpoints_in_a_fresh_interpreter():
     )
     assert result.returncode == 0, result.stderr
     assert "--asset-id" in result.stdout
+
+
+def test_endpoint_lookup_loads_the_built_ins_in_a_fresh_interpreter():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from sonde import endpoint; print(endpoint.get('asset-owners').__name__)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "AssetOwnersEndpoint"
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--burst-sizes", "10,-5"), ("--burst-sizes", "0"), ("--sweep-intervals", "1,-0.5")],
+)
+def test_parser_rejects_non_positive_list_values(flag: str, value: str):
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["asset-owners", "--asset-id", "1", flag, value])
+    assert exc.value.code == 2
 
 
 def test_parser_requires_endpoint():
@@ -227,6 +253,32 @@ def test_configured_secret_absent_from_logs(
     assert "SUPERSECRETCOOKIEVALUE" not in captured.err
     assert "SUPERSECRETCOOKIEVALUE" not in captured.out
     assert "***" in captured.err  # redaction actually fired, line not merely absent
+
+
+def test_query_param_credentials_are_scrubbed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    restore_root_logger: None,
+):
+    """A credential a provider sends as a query parameter is redacted like a header one."""
+
+    def auth_params(self: RobloxProvider) -> dict[str, str]:
+        return {"key": "SUPERSECRETPARAM"}
+
+    monkeypatch.setattr(RobloxProvider, "auth_params", auth_params)
+
+    def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
+        budget.take()
+        return core.Result(status=403, elapsed=0.01, error="denied: SUPERSECRETPARAM")
+
+    monkeypatch.setattr(core, "fetch", echo_secret)
+    argv = ["asset-owners", "--asset-id", "1", "--output", "-", "--log-format", "json"]
+    with pytest.raises(SystemExit):
+        cli.main(argv)
+    captured = capfd.readouterr()
+    assert "SUPERSECRETPARAM" not in captured.err
+    assert "***" in captured.err
 
 
 def test_unwritable_output_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

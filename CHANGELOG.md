@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A burst size repeated later in `--burst-sizes` no longer skips the cooldown after it.
 - The sweep's floor message names no interval, rather than printing `Nones`, when the
   first interval tried throttles.
+- `--burst-sizes` and `--sweep-intervals` refuse zero and negative values, which crashed
+  the probe or produced a meaningless report row.
+
+### Security
+
+- Credentials a provider sends as query parameters are redacted from logs, as header
+  credentials already were.
 
 ## [0.1.0] - 2026-07-02
 

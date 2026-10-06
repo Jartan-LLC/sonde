@@ -45,8 +45,11 @@ def _secret_variants(value: str) -> Iterable[str]:
             yield bare
 
 
-def _list_of[T](convert: Callable[[str], T], kind: str) -> Callable[[str], list[T]]:
-    """Build an argparse type for a comma-separated list (a clean exit 2 on bad input)."""
+def _list_of[T: float](convert: Callable[[str], T], kind: str) -> Callable[[str], list[T]]:
+    """Build an argparse type for a comma-separated list of positive numbers.
+
+    Bad input is a clean exit 2.
+    """
 
     def parse(raw: str) -> list[T]:
         try:
@@ -55,6 +58,8 @@ def _list_of[T](convert: Callable[[str], T], kind: str) -> Callable[[str], list[
             raise argparse.ArgumentTypeError(f"comma-separated {kind} required: {e}") from e
         if not vals:
             raise argparse.ArgumentTypeError("at least one value required")
+        if any(v <= 0 for v in vals):
+            raise argparse.ArgumentTypeError(f"positive {kind} required")
         return vals
 
     return parse
@@ -203,12 +208,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
     # Keep our own credentials out of logs if the target echoes them back.
-    register_log_secrets(
-        variant
-        for k, v in headers.items()
-        if k.lower() in _SECRET_HEADER_KEYS
-        for variant in _secret_variants(v)
-    )
+    secrets = [v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS]
+    secrets += provider.auth_params().values()
+    register_log_secrets(variant for v in secrets for variant in _secret_variants(v))
     probe = phases.Probe(
         endpoint=ep, budget=budget, session=core.build_session(headers=headers), headers=headers
     )
