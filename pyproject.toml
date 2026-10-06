@@ -24,12 +24,8 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Testing",
 ]
-# Every entry carries an upper bound. CI installs these fresh on every run, so
-# an unbounded floor lets an upstream major redden `main` on its release day --
-# which is what ruff 0.16.3 did on 2026-08-17 (PR #22). Sonde ships as a CLI
-# tool rather than a library, so capping majors costs no downstream resolver
-# room. Dependabot's minor-and-patch group proposes the bumps; a major stops at
-# the ceiling and lands as a change someone reads.
+# Upper bounds stop at each dependency's next breaking release, so Dependabot
+# proposes that bump as a PR rather than CI picking it up unannounced.
 dependencies = [
     "requests>=2.28,<3",
     "httpx>=0.24,<1",
