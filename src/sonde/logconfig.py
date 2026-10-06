@@ -27,7 +27,8 @@ def register_log_secrets(values: Iterable[str]) -> None:
     _SECRETS.sort(key=len, reverse=True)  # so a shorter secret can't split a longer one
 
 
-def _scrub(text: str) -> str:
+def scrub(text: str) -> str:
+    """Return `text` with every registered secret replaced by `***`."""
     for secret in _SECRETS:
         text = text.replace(secret, "***")
     return text
@@ -75,7 +76,7 @@ class PlainFormatter(logging.Formatter):
         # Preserve leading \n (phase banners) but escape embedded control chars.
         stripped = msg.lstrip("\n")
         leading = len(msg) - len(stripped)
-        return "\n" * leading + _scrub(stripped).translate(self._ESCAPES)
+        return "\n" * leading + scrub(stripped).translate(self._ESCAPES)
 
     @override
     def formatException(
@@ -85,11 +86,11 @@ class PlainFormatter(logging.Formatter):
     ) -> str:
         # Base format() appends this (unescaped) after the message; neutralise
         # control chars while preserving the traceback's structural newlines.
-        return _scrub(super().formatException(ei)).translate(self._EXC_ESCAPES)
+        return scrub(super().formatException(ei)).translate(self._EXC_ESCAPES)
 
     @override
     def formatStack(self, stack_info: str) -> str:
-        return _scrub(super().formatStack(stack_info)).translate(self._EXC_ESCAPES)
+        return scrub(super().formatStack(stack_info)).translate(self._EXC_ESCAPES)
 
 
 class JsonFormatter(logging.Formatter):
@@ -103,10 +104,10 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             # Strip banner leading \n (see setup_logging's formatter contract) so
             # each record stays a single line.
-            "message": _scrub(record.getMessage().lstrip("\n")),
+            "message": scrub(record.getMessage().lstrip("\n")),
         }
         if record.exc_info:
-            payload["exc"] = _scrub(self.formatException(record.exc_info))
+            payload["exc"] = scrub(self.formatException(record.exc_info))
         return json.dumps(payload, default=str)
 
 

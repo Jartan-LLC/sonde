@@ -2,14 +2,16 @@
 parsing and auth moved to the Provider — see test_provider.py.)"""
 
 import threading
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 
-from sonde import core
+from sonde import core, logconfig
 from sonde.core import RClass
+from sonde.logconfig import register_log_secrets
 from tests.helpers import FakeEndpoint, FakeResp
 
 
@@ -137,3 +139,30 @@ def test_fetch_wires_endpoint_request(monkeypatch: pytest.MonkeyPatch):
     assert res.count == 1
     assert captured["method"] == "GET"
     assert captured["params"]["cursor"] == "CUR"
+
+
+@pytest.fixture
+def registered_secret() -> Iterator[str]:
+    logconfig._SECRETS.clear()
+    register_log_secrets(["SECRETTOKENVALUE"])
+    yield "SECRETTOKENVALUE"
+    logconfig._SECRETS.clear()
+
+
+def test_parse_response_scrubs_before_truncating(registered_secret: str):
+    # The secret straddles the 200-character cut, so truncating first would keep its start.
+    resp = FakeResp(500, text="x" * 195 + registered_secret + "y")
+    res = core.parse_response(resp, 0.1, FakeEndpoint())
+    assert res.error is not None
+    assert "SECRE" not in res.error
+
+
+def test_fetch_scrubs_a_connection_error(registered_secret: str, monkeypatch: pytest.MonkeyPatch):
+    def refuse(method: str, url: str, **kwargs: Any) -> FakeResp:
+        raise requests.ConnectionError(f"failed: {url}?key={registered_secret}")
+
+    session = requests.Session()
+    monkeypatch.setattr(session, "request", refuse)
+    res = core.fetch(session, FakeEndpoint(), cursor=None, budget=core.Budget(1))
+    assert res.error is not None
+    assert registered_secret not in res.error

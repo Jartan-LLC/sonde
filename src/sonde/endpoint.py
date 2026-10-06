@@ -39,7 +39,11 @@ __all__ = [
 
 @dataclass
 class RequestSpec:
-    """A single HTTP request to issue."""
+    """A single HTTP request to issue.
+
+    `params` are the endpoint's own query parameters, not credentials: a provider's
+    `auth_params()` carries those, so logs can redact them.
+    """
 
     url: str
     params: dict[str, Any] = field(default_factory=dict[str, Any])

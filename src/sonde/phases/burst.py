@@ -14,6 +14,7 @@ import httpx
 
 from sonde import core
 from sonde.core import Result
+from sonde.logconfig import scrub
 from sonde.phases.probe import Probe, cursor_cycle
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,10 @@ async def _afetch(probe: Probe, client: httpx.AsyncClient, cursor: Any) -> Resul
         resp = await client.request(spec.method, spec.url, params=params, json=spec.json_body)
     except httpx.RequestError as e:
         return core.Result(
-            status=0, elapsed=time.perf_counter() - t0, rclass=core.RClass.ERROR, error=str(e)
+            status=0,
+            elapsed=time.perf_counter() - t0,
+            rclass=core.RClass.ERROR,
+            error=scrub(str(e)),
         )
     return core.parse_response(resp, time.perf_counter() - t0, probe.endpoint)
 

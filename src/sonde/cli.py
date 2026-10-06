@@ -210,7 +210,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     logger.info("Provider : %s", provider.name)
     logger.info(
         "Auth     : %s",
-        "credentials set" if provider.auth_headers() else "none (anonymous)",
+        "credentials set"
+        if provider.credentials() or provider.auth_params()
+        else "none (anonymous)",
     )
     logger.info("Budget   : %s requests total", args.max_requests)
 

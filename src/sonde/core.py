@@ -20,6 +20,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from sonde import __version__
+from sonde.logconfig import scrub
 
 if TYPE_CHECKING:
     from sonde.endpoint import Endpoint, RequestSpec
@@ -192,9 +193,9 @@ def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
             res.count = page.count
             res.next_cursor = page.next_cursor
         except _PARSE_ERRORS as e:
-            res.error = f"OK response but parse_page failed: {e}"
+            res.error = scrub(f"OK response but parse_page failed: {e}")
     elif rclass == RClass.ERROR and resp.status_code >= HTTPStatus.BAD_REQUEST:
-        res.error = resp.text[:200]
+        res.error = scrub(resp.text)[:200]  # scrubbed first, so the cut can't split a secret
     return res
 
 
@@ -221,5 +222,7 @@ def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Bu
             spec.method, spec.url, params=params, json=spec.json_body, timeout=30
         )
     except requests.RequestException as e:
-        return Result(status=0, elapsed=time.perf_counter() - t0, rclass=RClass.ERROR, error=str(e))
+        return Result(
+            status=0, elapsed=time.perf_counter() - t0, rclass=RClass.ERROR, error=scrub(str(e))
+        )
     return parse_response(resp, time.perf_counter() - t0, endpoint)

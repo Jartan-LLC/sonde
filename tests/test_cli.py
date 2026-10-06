@@ -215,7 +215,7 @@ def test_configured_secret_absent_from_logs(
     restore_root_logger: None,
 ):
     """End-to-end: a credential the target echoes back is scrubbed from stderr
-    through cli.main() — exercises run()'s header filter -> register -> _scrub."""
+    through cli.main() — exercises the provider's credentials() -> register -> scrub."""
     monkeypatch.setenv("ROBLOX_COOKIE", "SUPERSECRETCOOKIEVALUE")
 
     def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
@@ -655,3 +655,23 @@ def test_log_format_json_drain_failure(
     ]
     cli.main(argv)
     _assert_all_stderr_json(capfd.readouterr().err)
+
+
+@pytest.mark.parametrize(
+    ("token", "auth_line"), [(None, "none (anonymous)"), ("ghp_x1234567", "credentials set")]
+)
+def test_auth_line_reflects_declared_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    restore_root_logger: None,
+    token: str | None,
+    auth_line: str,
+):
+    # GitHub's auth headers always carry Accept and an API version, token or not.
+    if token is None:
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_TOKEN", token)
+    argv = ["github-stargazers", "--owner", "a", "--repo", "b"]
+    err = _stderr_when_target_echoes(monkeypatch, capfd, argv, "denied")
+    assert f"Auth     : {auth_line}" in err
