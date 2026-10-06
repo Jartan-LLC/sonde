@@ -11,8 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python 3.14 support.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
-- `core.parse_response`, `core.request_args` and `phases.has_authoritative_limit` as public
+- `core.parse_response`, `core.request_args` and `provider.has_authoritative_limit` as public
   functions.
+- `Provider.credentials()`: the raw secrets a provider sends, which the CLI redacts from
+  logs.
 
 ### Changed
 
@@ -26,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint's constructor.
 - `endpoint.get` and `endpoint.all_endpoints` include the built-in endpoints without an
   import of `sonde.endpoints` first.
+- `sonde.phases` is a package with a module per phase. Its public names import from
+  `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
+- Providers read their credentials from the environment when they are constructed.
 
 ### Fixed
 
@@ -37,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Credentials a provider sends as query parameters are redacted from logs, as header
-  credentials already were.
+- Logs redact the credentials each provider declares, wherever the request carries them,
+  including query parameters. The CLI no longer guesses them from header formats.
 
 ## [0.1.0] - 2026-07-02
 

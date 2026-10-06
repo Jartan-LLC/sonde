@@ -13,9 +13,6 @@ from sonde.core import RClass
 from tests.helpers import FakeEndpoint, FakeResp
 
 
-# --------------------------------------------------------------------------- #
-# RClass defaulting
-# --------------------------------------------------------------------------- #
 def test_default_rclass():
     assert core.default_rclass(200) == RClass.OK
     assert core.default_rclass(429) == RClass.THROTTLED
@@ -30,9 +27,6 @@ def test_result_derives_rclass_from_status():
     assert core.Result(403, 0.0, rclass=RClass.THROTTLED).rclass == RClass.THROTTLED
 
 
-# --------------------------------------------------------------------------- #
-# Budget
-# --------------------------------------------------------------------------- #
 def test_budget_basic():
     b = core.Budget(max_requests=3)
     assert [b.take() for _ in range(4)] == [True, True, True, False]
@@ -55,9 +49,6 @@ def test_budget_thread_safe():
     assert b.used == 1000
 
 
-# --------------------------------------------------------------------------- #
-# Session
-# --------------------------------------------------------------------------- #
 def test_build_session_pool_and_cookie_policy():
     s = core.build_session(headers={"Cookie": ".ROBLOSECURITY=X", "Accept": "application/json"})
     adapter = s.get_adapter("https://inventory.roblox.com")
@@ -90,9 +81,6 @@ def test_interesting_headers_excludes_secrets():
     assert core.interesting_headers(resp) == {"x-ratelimit-limit": "100", "server": "gw"}
 
 
-# --------------------------------------------------------------------------- #
-# parse_response (uses the endpoint's provider to classify)
-# --------------------------------------------------------------------------- #
 def test_parse_response_ok():
     resp = FakeResp(
         200,
@@ -128,9 +116,6 @@ def test_parse_response_error_captures_text():
     assert "boom" in res.error
 
 
-# --------------------------------------------------------------------------- #
-# fetch
-# --------------------------------------------------------------------------- #
 def test_fetch_budget_exhausted():
     res = core.fetch(
         session=requests.Session(), endpoint=FakeEndpoint(), cursor=None, budget=core.Budget(0)

@@ -1,7 +1,7 @@
-"""endpoint.py — the pluggable Endpoint interface.
+"""The pluggable Endpoint interface.
 
 To test a new API endpoint you implement ONE subclass of `Endpoint` and register
-it. The generic probing engine (phases.py) drives everything else. A subclass must
+it. The generic probing engine (`sonde.phases`) drives everything else. A subclass must
 answer three questions:
 
   1. build_request(cursor) -> RequestSpec   How do I form a request (URL, params,
@@ -62,7 +62,6 @@ class Endpoint(ABC):
     help: str = "abstract endpoint"  # one-line description for --help
     _provider_instance: Provider | None = None
 
-    # --- CLI plumbing (override as needed) ---
     @classmethod  # noqa: B027 - an optional hook
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Register endpoint-specific CLI arguments on `parser`."""
@@ -72,7 +71,6 @@ class Endpoint(ABC):
         """Build an instance from parsed CLI args."""
         return cls()
 
-    # --- provider (which API's rules apply) ---
     def _make_provider(self) -> Provider:
         """Return the Provider for this endpoint's API.
 
@@ -82,12 +80,11 @@ class Endpoint(ABC):
         return Provider()
 
     def provider(self) -> Provider:
-        """Memoised provider instance for this endpoint."""
+        """Return this endpoint's provider, the same instance on every call."""
         if self._provider_instance is None:
             self._provider_instance = self._make_provider()
         return self._provider_instance
 
-    # --- required behaviour ---
     @abstractmethod
     def build_request(self, cursor: Any) -> RequestSpec:
         """Return the request for the page at `cursor` (None for the first page)."""
@@ -101,7 +98,6 @@ class Endpoint(ABC):
         pagination, such as a Link header.
         """
 
-    # --- optional behaviour ---
     def total_items(self) -> int | None:
         """Return the known or estimated item total, for the wall-clock estimate.
 
@@ -114,9 +110,6 @@ class Endpoint(ABC):
         return {}
 
 
-# --------------------------------------------------------------------------- #
-# Registry: endpoints register themselves so the CLI can offer them as subcommands.
-# --------------------------------------------------------------------------- #
 _REGISTRY: dict[str, type[Endpoint]] = {}
 
 
@@ -146,13 +139,12 @@ def all_endpoints() -> dict[str, type[Endpoint]]:
     return dict(_loaded_registry())
 
 
-# --------------------------------------------------------------------------- #
-# Shared pagination flags. Paginated endpoints opt in by calling these from
-# add_arguments / from_args, so --page-size and --total-items are spelled the
-# same everywhere. Non-paginated endpoints simply don't call them.
-# --------------------------------------------------------------------------- #
 def add_pagination_args(parser: argparse.ArgumentParser, *, page_max: int = 100) -> None:
-    """Register the standard `--page-size` / `--total-items` flags on `parser`."""
+    """Register the standard `--page-size` / `--total-items` flags on `parser`.
+
+    A paginated endpoint calls this from `add_arguments` and `pagination_from_args` from
+    `from_args`, so the flags are spelled the same on every endpoint.
+    """
     parser.add_argument(
         "--page-size", type=int, default=page_max, help=f"items per page; capped at {page_max}"
     )

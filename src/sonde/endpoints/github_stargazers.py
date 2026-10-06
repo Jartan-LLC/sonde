@@ -1,12 +1,9 @@
-"""endpoints/github_stargazers.py — a non-Roblox endpoint, to prove the tool generalises.
+"""The GitHub stargazers endpoint: the users who starred a repository.
 
     GET https://api.github.com/repos/{owner}/{repo}/stargazers?per_page=100&page=N
 
-Exercises the parts Roblox doesn't:
-  * GitHubProvider — throttles with 403 (+ x-ratelimit-remaining: 0), epoch reset.
-  * Token auth via GITHUB_TOKEN (Authorization header).
-  * HEADER-based pagination — the next page comes from the `Link` response header,
-    not the body, so parse_page reads response.headers.
+The next page comes from the `Link` response header, not the body, so `parse_page`
+reads `response.headers`. GitHub's own rules, and its token auth, are `GitHubProvider`'s.
 """
 
 from __future__ import annotations

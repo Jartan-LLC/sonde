@@ -1,4 +1,4 @@
-"""core.py — endpoint- and provider-agnostic HTTP plumbing.
+"""Endpoint- and provider-agnostic HTTP plumbing.
 
 Response classification, rate-limit-header parsing, and auth are NOT here — those
 vary per API and live behind the Provider interface (provider.py). core only knows
@@ -46,9 +46,6 @@ BASE_HEADERS = {
 HEADER_SUBSTRINGS = ("ratelimit", "retry-after", "x-request", "server", "cf-ray")
 
 
-# --------------------------------------------------------------------------- #
-# Normalised response class — phases branch on this, never on raw status.
-# --------------------------------------------------------------------------- #
 class RClass(StrEnum):
     """How a response counts for the phases, whatever its raw status."""
 
@@ -79,9 +76,6 @@ def default_rclass(status: int) -> RClass:
     return RClass.ERROR
 
 
-# --------------------------------------------------------------------------- #
-# Request budget: thread-safe hard ceiling.
-# --------------------------------------------------------------------------- #
 @dataclass
 class Budget:
     """A thread-safe ceiling on the requests a run may send.
@@ -109,14 +103,11 @@ class Budget:
             return max(0, self.max_requests - self.used)
 
 
-# --------------------------------------------------------------------------- #
-# Session
-# --------------------------------------------------------------------------- #
 def build_session(headers: dict[str, str] | None = None) -> requests.Session:
-    """Build the session the serial phases share.
+    """Build the session the serial phases share: no retries, and no cookies kept.
 
-    Auth rides on headers, so the no-write cookie jar is never mutated. The burst
-    phase builds its own httpx client.
+    A server's Set-Cookie is refused, so every request carries the same credentials:
+    the ones in the headers.
 
     Args:
         headers: Request headers; `BASE_HEADERS` when omitted.
@@ -133,9 +124,6 @@ def build_session(headers: dict[str, str] | None = None) -> requests.Session:
     return s
 
 
-# --------------------------------------------------------------------------- #
-# Result + response handling
-# --------------------------------------------------------------------------- #
 @dataclass
 class Result:
     """One request's outcome, as the phases read it."""

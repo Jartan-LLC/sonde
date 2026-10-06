@@ -17,9 +17,6 @@ from sonde.provider import RobloxProvider
 from tests.helpers import RLH_420, FakeClock, Handler, make_bucket, make_burst_handler
 
 
-# --------------------------------------------------------------------------- #
-# Parser
-# --------------------------------------------------------------------------- #
 def test_parser_lists_endpoint_subcommands():
     p = build_parser()
     args = p.parse_args(["asset-owners", "--asset-id", "1"])
@@ -89,9 +86,6 @@ def test_parser_help_renders(capsys: pytest.CaptureFixture[str]):
     assert "--output" in out
 
 
-# --------------------------------------------------------------------------- #
-# run() — header path
-# --------------------------------------------------------------------------- #
 def _args(tmp_path: Path, *extra: str) -> tuple[argparse.Namespace, Path]:
     out = tmp_path / "report.json"
     base = [
@@ -158,9 +152,6 @@ def test_run_aborts_on_non_200(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert "estimate" not in report  # bailed before estimating
 
 
-# --------------------------------------------------------------------------- #
-# Output mode flags
-# --------------------------------------------------------------------------- #
 def test_verbose_quiet_mutually_exclusive():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["asset-owners", "--asset-id", "1", "-v", "-q"])
@@ -216,20 +207,6 @@ def test_bad_sweep_intervals_exits_2():
     assert exc.value.code == 2
 
 
-def test_secret_variants_yields_bare_credential():
-    assert list(cli._secret_variants("Bearer ghp_longtoken")) == [
-        "Bearer ghp_longtoken",
-        "ghp_longtoken",
-    ]
-    assert list(cli._secret_variants(".ROBLOSECURITY=cookieval")) == [
-        ".ROBLOSECURITY=cookieval",
-        "cookieval",
-    ]
-    assert list(cli._secret_variants("plainvalue")) == ["plainvalue"]
-    # bare tail shorter than 8 chars is not emitted (avoids over-redacting log text)
-    assert list(cli._secret_variants("Bearer abc")) == ["Bearer abc"]
-
-
 def test_configured_secret_absent_from_logs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -266,7 +243,11 @@ def test_query_param_credentials_are_scrubbed(
     def auth_params(self: RobloxProvider) -> dict[str, str]:
         return {"key": "SUPERSECRETPARAM"}
 
+    def credentials(self: RobloxProvider) -> list[str]:
+        return ["SUPERSECRETPARAM"]
+
     monkeypatch.setattr(RobloxProvider, "auth_params", auth_params)
+    monkeypatch.setattr(RobloxProvider, "credentials", credentials)
 
     def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
         budget.take()
@@ -518,9 +499,6 @@ def test_log_format_json_abort_path(
     _assert_all_stderr_json(capfd.readouterr().err)
 
 
-# --------------------------------------------------------------------------- #
-# main() crash / interrupt handling
-# --------------------------------------------------------------------------- #
 def test_main_crash_logs_json_and_exits_1(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
 ):

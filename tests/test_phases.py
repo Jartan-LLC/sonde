@@ -10,13 +10,11 @@ import httpx
 import pytest
 
 from sonde import core, phases
+from sonde.phases import burst, probe, sweep
 from sonde.provider import Provider
 from tests.helpers import FakeClock, FakeEndpoint, Handler, make_bucket, make_probe
 
 
-# --------------------------------------------------------------------------- #
-# Sequential
-# --------------------------------------------------------------------------- #
 def test_sequential_trips_429(
     clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
 ):
@@ -36,9 +34,6 @@ def test_sequential_no_429_when_limit_high(
     assert summary["successful_before_429"] == 30
 
 
-# --------------------------------------------------------------------------- #
-# Sweep
-# --------------------------------------------------------------------------- #
 def test_sweep_finds_floor(
     clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
 ):
@@ -121,14 +116,11 @@ def test_sweep_respects_budget(
     assert b.used <= 60  # never exceeds the budget
 
 
-# --------------------------------------------------------------------------- #
-# Burst summary helper
-# --------------------------------------------------------------------------- #
 def test_summarise_burst_counts():
     batch = [core.Result(200, 0.01) for _ in range(7)] + [
         core.Result(429, 0.01, retry_after=5.0) for _ in range(3)
     ]
-    row = phases._summarise_burst(phases._BurstOutcome(batch, elapsed_s=0.2, spread_ms=4.0))
+    row = burst._summarise_burst(burst._BurstOutcome(batch, elapsed_s=0.2, spread_ms=4.0))
     assert row["ok_200"] == 7
     assert row["throttled_429"] == 3
     assert row["max_retry_after"] == 5.0
@@ -136,9 +128,6 @@ def test_summarise_burst_counts():
     # site now, so it's exercised in test_burst.py, not here.
 
 
-# --------------------------------------------------------------------------- #
-# Estimate — rate-source priority
-# --------------------------------------------------------------------------- #
 def test_estimate_prefers_headers():
     rl = Provider().parse_rate_limit(
         {
@@ -212,9 +201,6 @@ def test_estimate_zero_total_reports_zero_pages():
     assert est["estimated_minutes"] == 0.0
 
 
-# --------------------------------------------------------------------------- #
-# Estimate — token-bucket inference
-# --------------------------------------------------------------------------- #
 def test_estimate_infers_from_token_bucket():
     """No authoritative headers and no swept floor, but a fully-OK burst plus a
     measured window -> token-bucket inference: (bucket / window) * 60 * margin."""
@@ -260,13 +246,10 @@ def test_estimate_no_throttle_fallback_scales_with_margin():
     assert est(0.5)["safe_rate_per_min"] == pytest.approx(150.0)  # 10 * 60 * (0.5 * 0.5)
 
 
-# --------------------------------------------------------------------------- #
-# Recovery probe — geometric backoff generator + measured return value
-# --------------------------------------------------------------------------- #
 def test_recovery_steps_geometric_backoff():
     """_recovery_steps is a pure state machine; assert its backoff schedule,
     cursor round-robin, and max_wait termination directly."""
-    steps = list(phases._recovery_steps(0.25, 5.0, 10, ["a", "b"]))
+    steps = list(burst._recovery_steps(0.25, 5.0, 10, ["a", "b"]))
     # cumulative wait (3rd tuple element) grows 0.25, then *1.6 each poll
     waits = [w for _, _, w in steps]
     assert waits == pytest.approx([0.25, 0.65, 1.29, 2.314, 3.9524, 6.57384], abs=1e-4)
@@ -279,11 +262,8 @@ def test_recovery_steps_geometric_backoff():
     assert sizes[1] == pytest.approx(sizes[0] * 1.6)
 
 
-# --------------------------------------------------------------------------- #
-# Cursor, drain, pacing and async-fetch helpers
-# --------------------------------------------------------------------------- #
 def test_cursors_without_a_pool_yield_none():
-    cursors = phases._cursors([])
+    cursors = probe.cursor_cycle([])
     assert [next(cursors) for _ in range(3)] == [None, None, None]
 
 
@@ -291,8 +271,8 @@ def test_drain_stops_when_the_budget_runs_out(
     clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
 ):
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
-    used, emptied = phases._drain(
-        make_probe(fake_endpoint, core.Budget(2)), phases._cursors([]), cap=50
+    used, emptied = sweep._drain(
+        make_probe(fake_endpoint, core.Budget(2)), probe.cursor_cycle([]), cap=50
     )
     assert (used, emptied) == (2, False)  # the refused third request isn't counted
 
@@ -301,8 +281,8 @@ def test_paced_stops_when_the_budget_runs_out(
     clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
 ):
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
-    paced = phases._paced(
-        make_probe(fake_endpoint, core.Budget(3)), phases._cursors([]), interval=0.1, count=10
+    paced = sweep._paced(
+        make_probe(fake_endpoint, core.Budget(3)), probe.cursor_cycle([]), interval=0.1, count=10
     )
     assert (paced.sent, paced.throttled) == (3, 0)
 
@@ -317,7 +297,7 @@ def test_afetch_reports_a_network_error(
 
     async def go() -> core.Result:
         async with httpx.AsyncClient() as client:
-            return await phases._afetch(make_probe(fake_endpoint, core.Budget(1)), client, None)
+            return await burst._afetch(make_probe(fake_endpoint, core.Budget(1)), client, None)
 
     r = asyncio.run(go())
     assert (r.status, r.rclass) == (0, core.RClass.ERROR)

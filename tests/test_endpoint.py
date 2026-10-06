@@ -11,9 +11,6 @@ from sonde.endpoints.asset_owners import AssetOwnersEndpoint
 from tests.helpers import FakeResp
 
 
-# --------------------------------------------------------------------------- #
-# Registry
-# --------------------------------------------------------------------------- #
 def test_asset_owners_registered():
     assert "asset-owners" in endpoint.all_endpoints()
     assert endpoint.get("asset-owners") is AssetOwnersEndpoint
@@ -36,9 +33,6 @@ def test_register_rejects_duplicate():
         register(AssetOwnersEndpoint)  # already registered under "asset-owners"
 
 
-# --------------------------------------------------------------------------- #
-# asset-owners behaviour
-# --------------------------------------------------------------------------- #
 def test_build_request_without_cursor():
     ep = AssetOwnersEndpoint(asset_id=20573078, page_size=100, sort_order="Asc")
     spec = ep.build_request(None)
@@ -93,9 +87,6 @@ def test_from_args_roundtrip():
     assert ep.sort_order == "Desc"
 
 
-# --------------------------------------------------------------------------- #
-# Shared pagination helpers
-# --------------------------------------------------------------------------- #
 def test_add_pagination_args_defaults():
     p = argparse.ArgumentParser()
     endpoint.add_pagination_args(p, page_max=100)

@@ -1,4 +1,4 @@
-"""endpoints/asset_owners.py — the asset-owners endpoint.
+"""The asset-owners endpoint.
 
     GET https://inventory.roblox.com/v2/assets/{assetId}/owners
         ?limit={10|25|50|100}&cursor={cursor}&sortOrder={Asc|Desc}

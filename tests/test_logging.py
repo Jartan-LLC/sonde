@@ -17,9 +17,6 @@ from sonde.logconfig import (
 )
 
 
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
 def _make_record(
     msg: str, level: int = logging.INFO, name: str = "sonde.test"
 ) -> logging.LogRecord:
@@ -39,9 +36,6 @@ def _auto_restore_logger(restore_root_logger: None):
     """Autouse wrapper around the shared conftest fixture."""
 
 
-# --------------------------------------------------------------------------- #
-# PlainFormatter
-# --------------------------------------------------------------------------- #
 class TestPlainFormatter:
     def setup_method(self):
         self.fmt = PlainFormatter()
@@ -119,9 +113,6 @@ class TestPlainFormatter:
         assert "\n" in result
 
 
-# --------------------------------------------------------------------------- #
-# JsonFormatter
-# --------------------------------------------------------------------------- #
 class TestJsonFormatter:
     def setup_method(self):
         self.fmt = JsonFormatter()
@@ -167,9 +158,6 @@ class TestJsonFormatter:
         assert "\n" not in result
 
 
-# --------------------------------------------------------------------------- #
-# setup_logging
-# --------------------------------------------------------------------------- #
 class TestSetupLogging:
     def test_idempotent(self):
         setup_logging()
@@ -203,9 +191,6 @@ class TestSetupLogging:
         assert "leftover" not in logconfig._SECRETS
 
 
-# --------------------------------------------------------------------------- #
-# Secret redaction
-# --------------------------------------------------------------------------- #
 class TestSecretRedaction:
     def setup_method(self):
         logconfig._SECRETS.clear()
