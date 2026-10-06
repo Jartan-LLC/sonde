@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RClass` is a `StrEnum`, so `str(RClass.OK)` is `"ok"`.
 - `register` returns the decorated class's own type, so type checkers see a registered
   endpoint's constructor.
-- `core.parse_response` is public.
+- `core.parse_response` and `core.request_args` are public.
+- A burst size repeated later in `--burst-sizes` no longer skips the cooldown after it.
 
 ## [0.1.0] - 2026-07-02
 

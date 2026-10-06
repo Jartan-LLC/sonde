@@ -2,13 +2,16 @@
 and the estimate's rate-source priority. Uses the virtual `clock` so pacing/sleeps
 resolve instantly and deterministically."""
 
+import asyncio
+from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
 
 from sonde import core, phases
 from sonde.provider import Provider
-from tests.helpers import FakeClock, FakeEndpoint, make_bucket, make_probe
+from tests.helpers import FakeClock, FakeEndpoint, Handler, make_bucket, make_probe
 
 
 # --------------------------------------------------------------------------- #
@@ -149,7 +152,7 @@ def test_estimate_prefers_headers():
         phases.Measurements(
             page_count=100,
             rate_limit=rl,
-            swept_interval=0.6,
+            swept_interval=0.6,  # present, but headers should win
         ),
         margin=0.8,
     )
@@ -243,7 +246,7 @@ def test_estimate_no_throttle_fallback_scales_with_margin():
             phases.Measurements(
                 page_count=100,
                 rate_limit={},
-                seq_summary={"seq_req_per_sec": 10.0},
+                seq_summary={"seq_req_per_sec": 10.0},  # no first_429 -> rung 5, not rung 4
                 burst_results=[],
                 measured_window=None,
                 swept_interval=None,
@@ -274,3 +277,49 @@ def test_recovery_steps_geometric_backoff():
     # per-poll step grows by the 1.6 factor
     sizes = [s for s, _, _ in steps]
     assert sizes[1] == pytest.approx(sizes[0] * 1.6)
+
+
+# --------------------------------------------------------------------------- #
+# Extracted helpers
+# --------------------------------------------------------------------------- #
+def test_cursors_without_a_pool_yield_none():
+    cursors = phases._cursors([])
+    assert [next(cursors) for _ in range(3)] == [None, None, None]
+
+
+def test_drain_stops_when_the_budget_runs_out(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
+    monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
+    used, emptied = phases._drain(
+        make_probe(fake_endpoint, core.Budget(2)), phases._cursors([]), cap=50
+    )
+    assert (used, emptied) == (2, False)  # the refused third request isn't counted
+
+
+def test_paced_stops_when_the_budget_runs_out(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
+    monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
+    paced = phases._paced(
+        make_probe(fake_endpoint, core.Budget(3)), phases._cursors([]), interval=0.1, count=10
+    )
+    assert (paced.sent, paced.throttled) == (3, 0)
+
+
+def test_afetch_reports_a_network_error(
+    fake_endpoint: FakeEndpoint, burst_transport: Callable[[Handler], None]
+):
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    burst_transport(refuse)
+
+    async def go() -> core.Result:
+        async with httpx.AsyncClient() as client:
+            return await phases._afetch(make_probe(fake_endpoint, core.Budget(1)), client, None)
+
+    r = asyncio.run(go())
+    assert (r.status, r.rclass) == (0, core.RClass.ERROR)
+    assert r.error is not None
+    assert "refused" in r.error

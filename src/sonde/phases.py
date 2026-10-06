@@ -1,7 +1,8 @@
 """phases.py — the generic rate-limit probing engine.
 
-Every phase takes an `Endpoint` and drives it through `core.fetch` (or, for the
-concurrent burst, an async httpx client). Nothing here knows about any specific
+Every probing phase works against a `Probe` and drives its endpoint through
+`core.fetch` (or, for the concurrent burst, an async httpx client); the estimate does
+no I/O and works from the `Measurements`. Nothing here knows about any specific
 endpoint. Phases:
 
   sanity     one request; read auth + x-ratelimit headers
@@ -25,7 +26,7 @@ import time
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from http import HTTPStatus
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 import requests
@@ -99,6 +100,11 @@ class Measurements:
     swept_interval: float | None = None
 
 
+def has_authoritative_limit(rate_limit: dict[str, Any]) -> bool:
+    """Whether the headers state both a limit and its window, which makes the sweep redundant."""
+    return bool(rate_limit.get("limit") and rate_limit.get("window_s"))
+
+
 def _cursors(cursor_pool: list[Any]) -> Iterator[Any]:
     """Cycle through the collected cursors, or yield None forever when there are none."""
     return itertools.cycle(cursor_pool or [None])
@@ -142,7 +148,7 @@ def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
         logger.debug("  headers: %s", json.dumps(r.headers))
 
     rl = endpoint.provider().parse_rate_limit(r.headers)
-    if rl.get("limit") and rl.get("window_s"):
+    if has_authoritative_limit(rl):
         logger.info(
             "  >> RATE LIMIT (headers, authoritative): %s per %ss window",
             rl["limit"],
@@ -175,7 +181,7 @@ def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
 # Sequential sustained probe
 # --------------------------------------------------------------------------- #
 def phase_seq(probe: Probe, cap: int) -> tuple[dict[str, Any], list[Any]]:
-    """Send back-to-back requests until the first throttle, the budget, or `cap`.
+    """Send back-to-back requests until the first throttle, error, empty budget, or `cap`.
 
     Returns:
         The phase's summary, and the cursors it collected for the later phases.
@@ -244,7 +250,7 @@ def phase_seq(probe: Probe, cap: int) -> tuple[dict[str, Any], list[Any]]:
 
 
 # --------------------------------------------------------------------------- #
-# Recovery probe — backoff generator (the async burst measures the window inline)
+# Recovery probe — backoff generator
 # --------------------------------------------------------------------------- #
 def _recovery_steps(
     start_step: float, max_wait: float, max_polls: int, cursor_pool: list[Any]
@@ -270,7 +276,7 @@ def _recovery_steps(
 def phase_burst(
     probe: Probe, cursor_pool: list[Any], config: BurstConfig
 ) -> tuple[list[dict[str, Any]], float | None]:
-    """Fire bursts of concurrent requests, measuring the throttle window on the first.
+    """Fire bursts of concurrent requests, measuring the window on the first throttled one.
 
     Returns:
         One report row per burst, and the measured window in seconds (None if no burst
@@ -289,9 +295,7 @@ async def _afetch(probe: Probe, client: httpx.AsyncClient, cursor: Any) -> Resul
         return core.Result(
             status=-1, elapsed=0.0, rclass=core.RClass.BUDGET, error="request budget exhausted"
         )
-    endpoint = probe.endpoint
-    spec = endpoint.build_request(cursor)
-    params = {**endpoint.provider().auth_params(), **(spec.params or {})}
+    spec, params = core.request_args(probe.endpoint, cursor)
     t0 = time.perf_counter()
     try:
         resp = await client.request(spec.method, spec.url, params=params, json=spec.json_body)
@@ -299,7 +303,7 @@ async def _afetch(probe: Probe, client: httpx.AsyncClient, cursor: Any) -> Resul
         return core.Result(
             status=0, elapsed=time.perf_counter() - t0, rclass=core.RClass.ERROR, error=str(e)
         )
-    return core.parse_response(resp, time.perf_counter() - t0, endpoint)
+    return core.parse_response(resp, time.perf_counter() - t0, probe.endpoint)
 
 
 async def _measure_recovery(
@@ -328,14 +332,16 @@ async def _measure_recovery(
     return None
 
 
-async def _one_burst(
-    probe: Probe, client: httpx.AsyncClient, cursors: list[Any]
-) -> tuple[list[Result], float, float]:
-    """Send one request per cursor at once.
+class _BurstOutcome(NamedTuple):
+    results: list[Result]
+    elapsed_s: float
+    spread_ms: float  # first to last launch
 
-    Returns:
-        The results, the wall time in seconds, and the launch spread in milliseconds.
-    """
+
+async def _one_burst(
+    probe: Probe, client: httpx.AsyncClient, batch_cursors: list[Any]
+) -> _BurstOutcome:
+    """Send one request per cursor at once."""
     launches: list[float] = []
 
     async def one(cursor: Any) -> Result:
@@ -343,10 +349,10 @@ async def _one_burst(
         return await _afetch(probe, client, cursor)
 
     t0 = time.perf_counter()
-    batch = await asyncio.gather(*[one(cur) for cur in cursors])
+    batch = await asyncio.gather(*[one(cur) for cur in batch_cursors])
     elapsed = time.perf_counter() - t0
     spread_ms = (max(launches) - min(launches)) * 1000 if launches else 0.0
-    return batch, elapsed, spread_ms
+    return _BurstOutcome(batch, elapsed, spread_ms)
 
 
 async def _run_bursts(
@@ -360,7 +366,7 @@ async def _run_bursts(
     async with httpx.AsyncClient(
         headers=probe.headers, timeout=30, follow_redirects=True, limits=limits
     ) as client:
-        for n in config.sizes:
+        for i, n in enumerate(config.sizes):
             if probe.budget.remaining() < n:
                 logger.warning(
                     "  skipping burst of %s: only %s requests left in budget.",
@@ -368,10 +374,10 @@ async def _run_bursts(
                     probe.budget.remaining(),
                 )
                 break
-            batch, elapsed, spread_ms = await _one_burst(
-                probe, client, list(itertools.islice(cursors, n))
+            outcome = await _one_burst(probe, client, list(itertools.islice(cursors, n)))
+            row = _summarise_burst(
+                n, outcome.results, elapsed=outcome.elapsed_s, spread_ms=outcome.spread_ms
             )
-            row = _summarise_burst(n, batch, elapsed, spread_ms)
             # Recovery is async, so the window is measured here, on the first throttled
             # burst, not in the bookkeeping helper.
             if row["throttled_429"] > 0 and measured_window is None:
@@ -383,7 +389,7 @@ async def _run_bursts(
             results.append(row)
 
             wait = measured_window or row["max_retry_after"] or config.cooldown
-            if n != config.sizes[-1] and probe.budget.remaining() > 0:
+            if i < len(config.sizes) - 1 and probe.budget.remaining() > 0:
                 logger.debug("    cooling down %.0fs before next burst...", wait)
                 await asyncio.sleep(wait)
     return results, measured_window
@@ -395,11 +401,7 @@ def _summarise_burst(
     elapsed: float,
     spread_ms: float,
 ) -> dict[str, Any]:
-    """Count one burst's outcomes and build its report row.
-
-    Window and recovery decisions live at the call site, which measures recovery
-    inline.
-    """
+    """Count one burst's outcomes and build its report row."""
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
     c429 = sum(1 for r in batch if r.rclass == core.RClass.THROTTLED)
     other = n - ok - c429
@@ -481,8 +483,9 @@ def phase_sweep(
             return None, rows
 
         time.sleep(interval)  # seed ~1 token so request #1 isn't a guaranteed 429
-        sent, throttled, dur = _paced(probe, cursors, interval, config.probe_count)
-        eff_rate = sent / dur if dur > 0 else 0
+        paced = _paced(probe, cursors, interval, config.probe_count)
+        sent, throttled = paced.sent, paced.throttled
+        eff_rate = sent / paced.elapsed_s if paced.elapsed_s > 0 else 0
         frac = (throttled / sent) if sent else 1.0
         clean = frac <= config.tolerance
 
@@ -514,9 +517,9 @@ def phase_sweep(
             fastest_safe = interval
         else:
             logger.info(
-                "  => floor found: %ss throttles from empty; fastest sustainable interval = %ss",
+                "  => floor found: %ss throttles from empty; fastest sustainable interval = %s",
                 interval,
-                fastest_safe,
+                f"{fastest_safe}s" if fastest_safe is not None else "none of those tested",
             )
             break
 
@@ -539,23 +542,23 @@ def _drain(probe: Probe, cursors: Iterator[Any], cap: int) -> tuple[int, bool]:
     used = 0
     for _ in range(cap):
         r = core.fetch(probe.session, probe.endpoint, next(cursors), probe.budget)
-        used += 1
         if r.rclass == core.RClass.BUDGET:
             return used, False
+        used += 1
         consecutive = consecutive + 1 if r.rclass == core.RClass.THROTTLED else 0
         if consecutive >= _DRAINED_AFTER:
             return used, True
     return used, False
 
 
-def _paced(
-    probe: Probe, cursors: Iterator[Any], interval: float, count: int
-) -> tuple[int, int, float]:
-    """Send `count` requests `interval` seconds apart.
+class _PacedOutcome(NamedTuple):
+    sent: int
+    throttled: int
+    elapsed_s: float
 
-    Returns:
-        The requests sent, how many were throttled, and the wall time in seconds.
-    """
+
+def _paced(probe: Probe, cursors: Iterator[Any], interval: float, count: int) -> _PacedOutcome:
+    """Send `count` requests `interval` seconds apart."""
     throttled = 0
     sent = 0
     t_phase = time.perf_counter()
@@ -570,7 +573,7 @@ def _paced(
         slack = interval - (time.perf_counter() - t_req)
         if slack > 0:
             time.sleep(slack)
-    return sent, throttled, time.perf_counter() - t_phase
+    return _PacedOutcome(sent, throttled, time.perf_counter() - t_phase)
 
 
 # --------------------------------------------------------------------------- #
@@ -594,7 +597,7 @@ def _safe_rate(m: Measurements, margin: float) -> _Rate:
     then the sequential fallbacks.
     """
     rl = m.rate_limit
-    if rl.get("limit") and rl.get("window_s"):
+    if has_authoritative_limit(rl):
         limit, window = rl["limit"], rl["window_s"]
         max_per_min = limit * 60.0 / window
         even = window / limit

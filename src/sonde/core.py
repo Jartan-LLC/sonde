@@ -22,7 +22,7 @@ from requests.adapters import HTTPAdapter
 from sonde import __version__
 
 if TYPE_CHECKING:
-    from sonde.endpoint import Endpoint
+    from sonde.endpoint import Endpoint, RequestSpec
 
 __all__ = [
     "BASE_HEADERS",
@@ -34,6 +34,7 @@ __all__ = [
     "fetch",
     "interesting_headers",
     "parse_response",
+    "request_args",
 ]
 
 BASE_HEADERS = {
@@ -209,6 +210,12 @@ def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
     return res
 
 
+def request_args(endpoint: Endpoint, cursor: Any) -> tuple[RequestSpec, dict[str, Any]]:
+    """Return the request for `cursor`, and its query parameters with the provider's auth."""
+    spec = endpoint.build_request(cursor)
+    return spec, {**endpoint.provider().auth_params(), **(spec.params or {})}
+
+
 def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Budget) -> Result:
     """One probe request for `endpoint` at pagination position `cursor`."""
     if not budget.take():
@@ -216,10 +223,7 @@ def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Bu
             status=-1, elapsed=0.0, rclass=RClass.BUDGET, error="request budget exhausted"
         )
 
-    provider = endpoint.provider()
-    spec = endpoint.build_request(cursor)
-    params = {**provider.auth_params(), **(spec.params or {})}
-
+    spec, params = request_args(endpoint, cursor)
     t0 = time.perf_counter()
     try:
         resp = session.request(

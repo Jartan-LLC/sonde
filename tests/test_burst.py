@@ -190,3 +190,28 @@ def test_burst_measures_window_once_across_bursts(
     assert results[1]["throttled_429"] == 20
     assert results[1]["max_retry_after"] == 99.0  # second burst really saw the larger value
     assert mw == 7.0  # ...but the measured window stays the first burst's, not overwritten
+
+
+def test_burst_cools_down_after_every_burst_but_the_last(
+    monkeypatch: pytest.MonkeyPatch, burst_transport: Callable[[Handler], None]
+):
+    # A size repeated at the end (10, 50, 10) must not skip the cooldown after burst one.
+    sleeps: list[float] = []
+
+    async def record(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", record)
+    burst_transport(make_burst_handler(decider=lambda: True))
+    phases.phase_burst(
+        make_probe(FakeEndpoint(), core.Budget(1000)),
+        cursor_pool=["c1"],
+        config=phases.BurstConfig(
+            sizes=(10, 50, 10),
+            cooldown=5,
+            recovery_step=0.1,
+            recovery_max=1,
+            recovery_polls=2,
+        ),
+    )
+    assert sleeps == [5, 5]

@@ -261,7 +261,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["measured_window_seconds"] = measured.measured_window
 
     sweep_rows: list[dict[str, Any]] = []
-    headers_authoritative = bool(rl.get("limit") and rl.get("window_s"))
+    headers_authoritative = phases.has_authoritative_limit(rl)
     run_sweep = (not args.skip_sweep) and (args.force_sweep or not headers_authoritative)
     if run_sweep:
         sweep = phases.SweepConfig(
@@ -320,7 +320,7 @@ def _aborted(report: dict[str, Any]) -> bool:
     main() maps this to a non-zero exit, so CI can detect it.
     """
     sanity = report.get("sanity")
-    return bool(sanity) and sanity.get("rclass") != core.RClass.OK.value
+    return bool(sanity) and sanity.get("rclass") != core.RClass.OK
 
 
 def main(argv: list[str] | None = None) -> None:
