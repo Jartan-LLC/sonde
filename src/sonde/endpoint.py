@@ -18,6 +18,7 @@ See endpoints/asset_owners.py for a worked example, and the README.
 from __future__ import annotations
 
 import argparse
+import importlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Self
@@ -129,14 +130,20 @@ def register[E: type[Endpoint]](cls: E) -> E:
     return cls
 
 
+def _registry() -> dict[str, type[Endpoint]]:
+    """Return the registry, once the built-in endpoints have registered themselves."""
+    importlib.import_module("sonde.endpoints")
+    return _REGISTRY
+
+
 def get(name: str) -> type[Endpoint] | None:
     """Return the endpoint registered under `name`, or None."""
-    return _REGISTRY.get(name)
+    return _registry().get(name)
 
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
-    """Return every registered endpoint, by name."""
-    return dict(_REGISTRY)
+    """Return every registered endpoint, built-in or imported, by name."""
+    return dict(_registry())
 
 
 # --------------------------------------------------------------------------- #

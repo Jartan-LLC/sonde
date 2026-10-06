@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-import sonde.endpoints  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers the built-in endpoints
 from sonde import core, endpoint, phases
 from sonde.logconfig import register_log_secrets, setup_logging
 

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RClass` is a `StrEnum`, so `str(RClass.OK)` is `"ok"`.
 - `register` returns the decorated class's own type, so type checkers see a registered
   endpoint's constructor.
+- `endpoint.get` and `endpoint.all_endpoints` include the built-in endpoints without an
+  import of `sonde.endpoints` first.
 - `core.parse_response` and `core.request_args` are public, and
   `phases.has_authoritative_limit` is new.
 
