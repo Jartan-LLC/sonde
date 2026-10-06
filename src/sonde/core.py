@@ -1,5 +1,4 @@
-"""
-core.py — endpoint- and provider-agnostic HTTP plumbing.
+"""core.py — endpoint- and provider-agnostic HTTP plumbing.
 
 Response classification, rate-limit-header parsing, and auth are NOT here — those
 vary per API and live behind the Provider interface (provider.py). core only knows
@@ -12,27 +11,30 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
+from http import HTTPStatus
 from http.cookiejar import DefaultCookiePolicy
 from typing import TYPE_CHECKING, Any
 
 import requests
 from requests.adapters import HTTPAdapter
 
-from . import __version__
+from sonde import __version__
 
 if TYPE_CHECKING:
-    from .endpoint import Endpoint
+    from sonde.endpoint import Endpoint, RequestSpec
 
 __all__ = [
-    "RClass",
+    "BASE_HEADERS",
     "Budget",
+    "RClass",
     "Result",
     "build_session",
-    "fetch",
     "default_rclass",
+    "fetch",
     "interesting_headers",
-    "BASE_HEADERS",
+    "parse_response",
+    "request_args",
 ]
 
 BASE_HEADERS = {
@@ -47,7 +49,9 @@ HEADER_SUBSTRINGS = ("ratelimit", "retry-after", "x-request", "server", "cf-ray"
 # --------------------------------------------------------------------------- #
 # Normalised response class — phases branch on this, never on raw status.
 # --------------------------------------------------------------------------- #
-class RClass(str, Enum):
+class RClass(StrEnum):
+    """How a response counts for the phases, whatever its raw status."""
+
     OK = "ok"  # a usable success response
     THROTTLED = "throttled"  # rate-limited (429, or provider-specific)
     ERROR = "error"  # any other non-success (4xx/5xx/network)
@@ -55,10 +59,20 @@ class RClass(str, Enum):
 
 
 def default_rclass(status: int) -> RClass:
-    """Fallback classification (also what the generic Provider uses)."""
-    if status == 200:
+    """Fallback classification (also what the generic Provider uses).
+
+    Args:
+        status: The HTTP status, or -1 for a request the budget refused.
+
+    Returns:
+        The response class.
+
+    >>> default_rclass(200), default_rclass(429), default_rclass(503)
+    (<RClass.OK: 'ok'>, <RClass.THROTTLED: 'throttled'>, <RClass.ERROR: 'error'>)
+    """
+    if status == HTTPStatus.OK:
         return RClass.OK
-    if status == 429:
+    if status == HTTPStatus.TOO_MANY_REQUESTS:
         return RClass.THROTTLED
     if status == -1:
         return RClass.BUDGET
@@ -70,11 +84,19 @@ def default_rclass(status: int) -> RClass:
 # --------------------------------------------------------------------------- #
 @dataclass
 class Budget:
+    """A thread-safe ceiling on the requests a run may send.
+
+    >>> budget = Budget(max_requests=1)
+    >>> budget.take(), budget.take(), budget.remaining()
+    (True, False, 0)
+    """
+
     max_requests: int
     used: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def take(self) -> bool:
+        """Claim one request, or return False when none are left."""
         with self._lock:
             if self.used >= self.max_requests:
                 return False
@@ -82,6 +104,7 @@ class Budget:
             return True
 
     def remaining(self) -> int:
+        """Return how many requests are left."""
         with self._lock:
             return max(0, self.max_requests - self.used)
 
@@ -90,8 +113,17 @@ class Budget:
 # Session
 # --------------------------------------------------------------------------- #
 def build_session(headers: dict[str, str] | None = None) -> requests.Session:
-    """Session for the serial phases; auth rides on headers so the no-write cookie
-    jar is never mutated. The burst phase builds its own httpx client."""
+    """Build the session the serial phases share.
+
+    Auth rides on headers, so the no-write cookie jar is never mutated. The burst
+    phase builds its own httpx client.
+
+    Args:
+        headers: Request headers; `BASE_HEADERS` when omitted.
+
+    Returns:
+        A session with no retries and no cookie storage.
+    """
     s = requests.Session()
     s.headers.update(headers or dict(BASE_HEADERS))
     s.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
@@ -106,6 +138,8 @@ def build_session(headers: dict[str, str] | None = None) -> requests.Session:
 # --------------------------------------------------------------------------- #
 @dataclass
 class Result:
+    """One request's outcome, as the phases read it."""
+
     status: int
     elapsed: float
     # None only on input -> derived from status in __post_init__ (never None after construction).
@@ -113,15 +147,17 @@ class Result:
     count: int = 0
     next_cursor: Any = None
     retry_after: float | None = None
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict[str, str])
     error: str | None = None
 
     def __post_init__(self) -> None:
+        """Derive `rclass` from the status when none was given."""
         if self.rclass is None:
             self.rclass = default_rclass(self.status)
 
 
 def interesting_headers(resp: Any) -> dict[str, str]:
+    """Return the response headers worth reporting: rate limits, retry hints, server IDs."""
     return {
         k: v for k, v in resp.headers.items() if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
     }
@@ -130,10 +166,20 @@ def interesting_headers(resp: Any) -> dict[str, str]:
 _PARSE_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
 
 
-def _parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
-    """Classify via the endpoint's provider, then (on success) let the endpoint pull
-    item count + next cursor from the FULL response (so header-based pagination and
-    non-JSON bodies are possible)."""
+def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
+    """Classify a response with the endpoint's provider, then read its page.
+
+    On success the endpoint reads the item count and next cursor from the whole
+    response, so header-based pagination and non-JSON bodies work.
+
+    Args:
+        resp: A `requests.Response` or an `httpx.Response`.
+        elapsed: The request's wall time in seconds.
+        endpoint: The endpoint that sent it.
+
+    Returns:
+        The classified result, with the page's count and next cursor on success.
+    """
     provider = endpoint.provider()
     rclass = provider.classify(resp)
 
@@ -159,9 +205,18 @@ def _parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
             res.next_cursor = page.next_cursor
         except _PARSE_ERRORS as e:
             res.error = f"OK response but parse_page failed: {e}"
-    elif rclass == RClass.ERROR and resp.status_code >= 400:
+    elif rclass == RClass.ERROR and resp.status_code >= HTTPStatus.BAD_REQUEST:
         res.error = resp.text[:200]
     return res
+
+
+def request_args(endpoint: Endpoint, cursor: Any) -> tuple[RequestSpec, dict[str, Any]]:
+    """Return the request for `cursor` and its query parameters.
+
+    The parameters are the provider's auth parameters, overridden by the request's own.
+    """
+    spec = endpoint.build_request(cursor)
+    return spec, {**endpoint.provider().auth_params(), **(spec.params or {})}
 
 
 def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Budget) -> Result:
@@ -171,10 +226,7 @@ def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Bu
             status=-1, elapsed=0.0, rclass=RClass.BUDGET, error="request budget exhausted"
         )
 
-    provider = endpoint.provider()
-    spec = endpoint.build_request(cursor)
-    params = {**provider.auth_params(), **(spec.params or {})}
-
+    spec, params = request_args(endpoint, cursor)
     t0 = time.perf_counter()
     try:
         resp = session.request(
@@ -182,4 +234,4 @@ def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Bu
         )
     except requests.RequestException as e:
         return Result(status=0, elapsed=time.perf_counter() - t0, rclass=RClass.ERROR, error=str(e))
-    return _parse_response(resp, time.perf_counter() - t0, endpoint)
+    return parse_response(resp, time.perf_counter() - t0, endpoint)

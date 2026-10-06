@@ -10,11 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Python 3.14 support.
+- Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
+- `core.parse_response`, `core.request_args` and `phases.has_authoritative_limit` as public
+  functions.
 
 ### Changed
 
 - The source distribution ships the whole test suite, including `tests/conftest.py` and
   `tests/helpers.py`.
+- The `sonde.phases` functions take grouped arguments: the probing phases take a `Probe`
+  (endpoint, budget, session, headers), `phase_burst` and `phase_sweep` also take a
+  `BurstConfig` or `SweepConfig`, and `phase_estimate` takes a `Measurements`.
+- `RClass` is a `StrEnum`, so `str(RClass.OK)` is `"ok"`.
+- `register` returns the decorated class's own type, so type checkers see a registered
+  endpoint's constructor.
+- `endpoint.get` and `endpoint.all_endpoints` include the built-in endpoints without an
+  import of `sonde.endpoints` first.
+
+### Fixed
+
+- A burst the same size as the last one in `--burst-sizes` gets its cooldown.
+- The sweep's floor message names no interval, rather than printing `Nones`, when the
+  first interval tried throttles.
+- `--burst-sizes` and `--sweep-intervals` refuse zero and negative values, which crashed
+  the probe or produced a meaningless report row.
+
+### Security
+
+- Credentials a provider sends as query parameters are redacted from logs, as header
+  credentials already were.
 
 ## [0.1.0] - 2026-07-02
 

@@ -64,5 +64,7 @@ def test_uses_github_provider():
 def test_from_args():
     ns = argparse.Namespace(owner="anthropics", repo="sdk", total_items=9000, page_size=50)
     ep = GitHubStargazersEndpoint.from_args(ns)
-    assert ep.owner == "anthropics" and ep.repo == "sdk"
-    assert ep.total_items() == 9000 and ep.page_size == 50
+    assert ep.owner == "anthropics"
+    assert ep.repo == "sdk"
+    assert ep.total_items() == 9000
+    assert ep.page_size == 50

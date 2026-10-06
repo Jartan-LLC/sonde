@@ -3,6 +3,8 @@
 import json
 import logging
 import sys
+from datetime import datetime
+from typing import TextIO, cast
 
 import pytest
 
@@ -18,8 +20,10 @@ from sonde.logconfig import (
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
-def _make_record(msg, level=logging.INFO, name="sonde.test"):
-    record = logging.LogRecord(
+def _make_record(
+    msg: str, level: int = logging.INFO, name: str = "sonde.test"
+) -> logging.LogRecord:
+    return logging.LogRecord(
         name=name,
         level=level,
         pathname="test.py",
@@ -28,11 +32,10 @@ def _make_record(msg, level=logging.INFO, name="sonde.test"):
         args=(),
         exc_info=None,
     )
-    return record
 
 
 @pytest.fixture(autouse=True)
-def _auto_restore_logger(restore_root_logger):
+def _auto_restore_logger(restore_root_logger: None):
     """Autouse wrapper around the shared conftest fixture."""
 
 
@@ -135,8 +138,6 @@ class TestJsonFormatter:
     def test_timestamp_is_iso(self):
         record = _make_record("ts test")
         parsed = json.loads(self.fmt.format(record))
-        from datetime import datetime
-
         datetime.fromisoformat(parsed["timestamp"])
 
     def test_includes_exception(self):
@@ -179,7 +180,8 @@ class TestSetupLogging:
     def test_handler_is_stderr(self):
         setup_logging()
         handler = logging.getLogger().handlers[0]
-        assert handler.stream is sys.stderr
+        assert isinstance(handler, logging.StreamHandler)
+        assert cast("logging.StreamHandler[TextIO]", handler).stream is sys.stderr
 
     def test_plain_uses_plain_formatter(self):
         setup_logging(fmt="plain")

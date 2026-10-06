@@ -2,11 +2,18 @@
 
 import threading
 import time
+from collections.abc import Callable
+from typing import Any, override
 
 import httpx
+import requests
+from requests.structures import CaseInsensitiveDict
 
-from sonde import core, endpoint
+from sonde import core, endpoint, phases
 from sonde.endpoint import PageResult, RequestSpec
+
+type Fetch = Callable[[Any, endpoint.Endpoint, Any, core.Budget], core.Result]
+type Handler = Callable[[httpx.Request], httpx.Response]
 
 # Real captured headers from the two runs in this project.
 RLH_420 = {
@@ -26,42 +33,47 @@ RLH_15 = {
 class FakeClock:
     """Virtual clock so token-bucket sims and sweep pacing resolve instantly."""
 
-    def __init__(self, start=1000.0):
+    def __init__(self, start: float = 1000.0) -> None:
         self._t = start
         self._lock = threading.Lock()
 
-    def perf_counter(self):
+    def perf_counter(self) -> float:
         with self._lock:
             return self._t
 
-    def sleep(self, dt):
+    def sleep(self, dt: float) -> None:
         with self._lock:
             self._t += max(0.0, float(dt))
 
 
-def make_bucket(refill_period, capacity, headers=None):
+def make_bucket(
+    refill_period: float, capacity: int, headers: dict[str, str] | None = None
+) -> Fetch:
     """A core.fetch-compatible token-bucket simulator driven by time.perf_counter
     (i.e. the virtual clock when patched). Emits `headers` on every response."""
-    st = {"tok": float(capacity), "last": None, "lock": threading.Lock()}
+    tokens = float(capacity)
+    last: float | None = None
+    lock = threading.Lock()
 
-    def f(session, ep, cursor, budget):
+    def f(session: Any, ep: endpoint.Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
+        nonlocal tokens, last
         if not budget.take():
             return core.Result(status=-1, elapsed=0.0, error="budget exhausted")
-        with st["lock"]:
+        with lock:
             now = time.perf_counter()
-            if st["last"] is None:
-                st["last"] = now
-            st["tok"] = min(capacity, st["tok"] + (now - st["last"]) / refill_period)
-            st["last"] = now
-            ok = st["tok"] >= 1
+            if last is None:
+                last = now
+            tokens = min(capacity, tokens + (now - last) / refill_period)
+            last = now
+            ok = tokens >= 1
             if ok:
-                st["tok"] -= 1
+                tokens -= 1
         page = getattr(ep, "page_size", 100)
         r = core.Result(
             status=200 if ok else 429,
             elapsed=0.0,
             count=page if ok else 0,
-            next_cursor=("cur%d" % int(st["tok"])) if ok else None,
+            next_cursor=f"cur{int(tokens)}" if ok else None,
         )
         if headers:
             r.headers = dict(headers)
@@ -70,28 +82,26 @@ def make_bucket(refill_period, capacity, headers=None):
     return f
 
 
-class FakeHeaders(dict):
-    def get(self, key, default=None):
-        for k, v in self.items():
-            if k.lower() == str(key).lower():
-                return v
-        return default
-
-
 class FakeResp:
-    def __init__(self, status_code, headers=None, body=None, text="err-body"):
+    def __init__(
+        self,
+        status_code: int,
+        headers: dict[str, str] | None = None,
+        body: Any = None,
+        text: str = "err-body",
+    ) -> None:
         self.status_code = status_code
-        self.headers = FakeHeaders(headers or {})
+        self.headers = CaseInsensitiveDict(headers or {})
         self._body = body
         self._text = text
 
-    def json(self):
+    def json(self) -> Any:
         if self._body is None:
             raise ValueError("no json")
         return self._body
 
     @property
-    def text(self):
+    def text(self) -> str:
         return self._text
 
 
@@ -101,33 +111,42 @@ class FakeEndpoint(endpoint.Endpoint):
     name = "fake-test"
     help = "fake endpoint for tests"
 
-    def __init__(self, total=None, page_size=100):
+    def __init__(self, total: int | None = None, page_size: int = 100) -> None:
         self._total = total
         self.page_size = page_size
 
-    def build_request(self, cursor):
-        params = {"limit": self.page_size}
+    @override
+    def build_request(self, cursor: Any) -> RequestSpec:
+        params: dict[str, Any] = {"limit": self.page_size}
         if cursor:
             params["cursor"] = cursor
         return RequestSpec(url="https://example.test/probe", params=params)
 
-    def parse_page(self, response):
+    @override
+    def parse_page(self, response: Any) -> PageResult:
         body = response.json()
-        return PageResult(count=len(body.get("data", [])), next_cursor=body.get("nextPageCursor"))
+        return PageResult(count=len(body.get("data", ())), next_cursor=body.get("nextPageCursor"))
 
-    def total_items(self):
+    @override
+    def total_items(self) -> int | None:
         return self._total
 
 
-def make_burst_handler(decider, retry_after=None):
+def make_burst_handler(decider: Callable[[], bool], retry_after: float | None = None) -> Handler:
     """Build an `httpx.MockTransport` handler for the async burst phase. Each request
-    returns 200 or 429 per `decider()` (a zero-arg callable -> bool); 429s carry a
-    `Retry-After` header when `retry_after` is given."""
+    returns 200 or 429 per `decider()`; 429s carry a `Retry-After` header when
+    `retry_after` is given."""
 
-    def handler(request):
+    def handler(request: httpx.Request) -> httpx.Response:
         if decider():
             return httpx.Response(200, json={"data": [0] * 100, "nextPageCursor": "c"})
         headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
         return httpx.Response(429, headers=headers)
 
     return handler
+
+
+def make_probe(ep: endpoint.Endpoint, budget: core.Budget) -> phases.Probe:
+    """A Probe for tests that patch core.fetch or the httpx transport, so its session is
+    never used."""
+    return phases.Probe(endpoint=ep, budget=budget, session=requests.Session(), headers={})

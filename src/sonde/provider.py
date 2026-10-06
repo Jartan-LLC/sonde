@@ -1,31 +1,32 @@
-"""
-provider.py — the per-API "provider" abstraction.
+"""provider.py — the per-API "provider" abstraction.
 
 A Provider captures everything that varies by API rather than by endpoint:
-  * classify(response)     -> RClass   (what counts as success vs throttled)
-  * parse_rate_limit(hdrs) -> dict      (normalise the API's rate-limit headers)
-  * auth_headers()         -> dict      (credentials as headers)
-  * auth_params()          -> dict      (credentials as query params, if any)
 
-The base `Provider` is a working GENERIC provider: 200 = ok / 429 = throttled, the
+- `classify(response)`: what counts as success or throttling.
+- `parse_rate_limit(headers)`: the API's rate-limit headers, normalised.
+- `auth_headers()` and `auth_params()`: credentials as headers or query parameters.
+
+The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
 IETF `RateLimit`-draft header format (which is what Roblox uses), and no auth.
-Subclasses specialise. Endpoints reference a provider via Endpoint._make_provider().
+Subclasses specialise. Endpoints choose a provider in `Endpoint._make_provider()`.
 
-normalised rate-limit dict shape (all keys optional / may be None):
-    {limit, window_s, remaining, reset_s, policies, raw}
-  * reset_s is ALWAYS seconds-until-reset (epoch formats are converted).
-  * window_s may be None if the API doesn't express it and none is known.
+The normalised rate-limit dict has the keys `limit`, `window_s`, `remaining`,
+`reset_s`, `policies` and `raw`, each optional and possibly None. `reset_s` is
+always seconds until the reset (epoch formats are converted); `window_s` is None when
+the API doesn't state it and no default is known.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
-from typing import Any
+from http import HTTPStatus
+from typing import Any, override
 
-from .core import RClass
+from sonde.core import RClass
 
-__all__ = ["Provider", "RobloxProvider", "GitHubProvider"]
+__all__ = ["GitHubProvider", "Provider", "RobloxProvider"]
 
 
 class Provider:
@@ -35,23 +36,29 @@ class Provider:
 
     # --- classification ---
     def classify(self, resp: Any) -> RClass:
+        """Return how a response counts: ok, throttled, or an error."""
         sc = resp.status_code
-        if sc == 200:
+        if sc == HTTPStatus.OK:
             return RClass.OK
-        if sc == 429:
+        if sc == HTTPStatus.TOO_MANY_REQUESTS:
             return RClass.THROTTLED
         return RClass.ERROR
 
     # --- rate-limit header parsing (IETF RateLimit draft, e.g. Roblox) ---
     def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
+        """Normalise the response's rate-limit headers, or return {} when it has none.
+
+        >>> Provider().parse_rate_limit({"X-RateLimit-Limit": "60;w=60, 1000;w=3600"})["limit"]
+        1000
+        """
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit_raw = low.get("x-ratelimit-limit")
         if not limit_raw:
             return {}
 
-        policies = []  # (count, window_or_None)
-        for item in str(limit_raw).split(","):
-            item = item.strip()
+        policies: list[tuple[int, int | None]] = []
+        for raw_item in str(limit_raw).split(","):
+            item = raw_item.strip()
             if not item:
                 continue
             parts = item.split(";")
@@ -60,16 +67,14 @@ class Provider:
             except ValueError:
                 continue
             window = None
-            for pr in parts[1:]:
-                pr = pr.strip()
-                if pr.startswith("w="):
-                    try:
-                        window = int(pr[2:])
-                    except ValueError:
-                        pass
+            for raw_param in parts[1:]:
+                param = raw_param.strip()
+                if param.startswith("w="):
+                    with contextlib.suppress(ValueError):
+                        window = int(param[2:])
             policies.append((count, window))
 
-        windowed = [(c, w) for c, w in policies if w and w > 0]
+        windowed = [(c, w) for c, w in policies if w is not None and w > 0]
         if windowed:
             # Lowest sustained rate (count/window) binds, NOT the smallest window:
             # a short-window policy can permit a higher rate than a long-window one.
@@ -90,18 +95,24 @@ class Provider:
 
     # --- auth ---
     def auth_headers(self) -> dict[str, str]:
+        """Return the credentials sent as headers."""
         return {}
 
     def auth_params(self) -> dict[str, str]:
+        """Return the credentials sent as query parameters."""
         return {}
 
 
 class RobloxProvider(Provider):
-    """Roblox legacy endpoints: identical classification + header parsing to the
-    generic provider (Roblox uses the IETF format), plus cookie/bearer auth."""
+    """Roblox legacy endpoints: the generic rules plus cookie or bearer auth.
+
+    Roblox uses the IETF header format, so classification and parsing are the generic
+    provider's.
+    """
 
     name = "roblox"
 
+    @override
     def auth_headers(self) -> dict[str, str]:
         h: dict[str, str] = {}
         cookie = os.environ.get("ROBLOX_COOKIE")
@@ -114,30 +125,40 @@ class RobloxProvider(Provider):
 
 
 class GitHubProvider(Provider):
-    """GitHub REST API: throttles with 403 (+ `x-ratelimit-remaining: 0`) as well as
-    429, expresses reset as a Unix EPOCH (converted to seconds-until), and omits the
-    window (so a known default is injected). Token auth via GITHUB_TOKEN."""
+    """GitHub REST API rules, with token auth from GITHUB_TOKEN.
+
+    GitHub throttles with 403 (and `x-ratelimit-remaining: 0`) as well as 429, gives
+    the reset as a Unix epoch (converted to seconds until), and omits the window, so
+    a known default stands in.
+    """
 
     name = "github"
 
     def __init__(self, window_s: int = 3600) -> None:
-        # GitHub core API is 5000/hour; other resources differ (search=60s) -> override.
+        """Set the rate-limit window the headers don't state.
+
+        Args:
+            window_s: The window in seconds. The core API's is an hour; other
+                resources differ (search's is 60 seconds).
+        """
         self.window_s = window_s
 
+    @override
     def classify(self, resp: Any) -> RClass:
         sc = resp.status_code
-        if sc == 200:
+        if sc == HTTPStatus.OK:
             return RClass.OK
-        if sc == 429:
+        if sc == HTTPStatus.TOO_MANY_REQUESTS:
             return RClass.THROTTLED
         # primary limit -> 403 with remaining 0; secondary -> 403 with Retry-After
-        if sc == 403 and (
+        if sc == HTTPStatus.FORBIDDEN and (
             resp.headers.get("x-ratelimit-remaining") == "0"
             or resp.headers.get("retry-after") is not None
         ):
             return RClass.THROTTLED
         return RClass.ERROR
 
+    @override
     def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit = _first_int(low.get("x-ratelimit-limit"))
@@ -154,6 +175,7 @@ class GitHubProvider(Provider):
             "raw": {k: v for k, v in low.items() if k.startswith("x-ratelimit")},
         }
 
+    @override
     def auth_headers(self) -> dict[str, str]:
         h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
         tok = os.environ.get("GITHUB_TOKEN")

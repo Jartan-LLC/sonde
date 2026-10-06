@@ -2,8 +2,8 @@
 
 __version__ = "0.1.0"
 
-# Re-exported after __version__ so core.py's `from . import __version__` resolves.
-from .endpoint import (  # noqa: E402
+# Imported after __version__, which core.py reads while these imports run.
+from sonde.endpoint import (
     Endpoint,
     PageResult,
     RequestSpec,
@@ -11,15 +11,15 @@ from .endpoint import (  # noqa: E402
     pagination_from_args,
     register,
 )
-from .provider import Provider  # noqa: E402
+from sonde.provider import Provider
 
 __all__ = [
-    "__version__",
     "Endpoint",
-    "RequestSpec",
     "PageResult",
-    "register",
     "Provider",
+    "RequestSpec",
+    "__version__",
     "add_pagination_args",
     "pagination_from_args",
+    "register",
 ]

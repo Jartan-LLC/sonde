@@ -1,6 +1,7 @@
 """Tests for the Endpoint interface, registry, and the asset-owners implementation."""
 
 import argparse
+from typing import Any
 
 import pytest
 
@@ -20,18 +21,18 @@ def test_asset_owners_registered():
 
 def test_register_requires_name():
     class NoName(Endpoint):
-        def build_request(self, cursor):
+        def build_request(self, cursor: Any) -> RequestSpec:
             return RequestSpec(url="x")
 
-        def parse_page(self, body):
+        def parse_page(self, response: Any) -> PageResult:
             return PageResult(0)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must set a unique `name`"):
         register(NoName)
 
 
 def test_register_rejects_duplicate():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="duplicate endpoint name"):
         register(AssetOwnersEndpoint)  # already registered under "asset-owners"
 
 
@@ -99,9 +100,11 @@ def test_add_pagination_args_defaults():
     p = argparse.ArgumentParser()
     endpoint.add_pagination_args(p, page_max=100)
     a = p.parse_args([])
-    assert a.page_size == 100 and a.total_items is None  # default = page_max, None
+    assert a.page_size == 100
+    assert a.total_items is None
     a2 = p.parse_args(["--page-size", "40", "--total-items", "7"])
-    assert a2.page_size == 40 and a2.total_items == 7
+    assert a2.page_size == 40
+    assert a2.total_items == 7
 
 
 def test_pagination_from_args_clamps():

@@ -3,6 +3,8 @@ for the generic, Roblox, and GitHub providers."""
 
 import time
 
+import pytest
+
 from sonde.core import RClass
 from sonde.provider import GitHubProvider, Provider, RobloxProvider
 from tests.helpers import RLH_15, RLH_420, FakeResp
@@ -22,13 +24,15 @@ def test_generic_classify():
 def test_ietf_parse_420():
     rl = Provider().parse_rate_limit(RLH_420)
     assert (rl["limit"], rl["window_s"]) == (420, 60)
-    assert rl["remaining"] == 419 and rl["reset_s"] == 2
+    assert rl["remaining"] == 419
+    assert rl["reset_s"] == 2
 
 
 def test_ietf_parse_15():
     rl = Provider().parse_rate_limit(RLH_15)
     assert (rl["limit"], rl["window_s"]) == (15, 60)
-    assert rl["remaining"] == 14 and rl["reset_s"] == 21
+    assert rl["remaining"] == 14
+    assert rl["reset_s"] == 21
 
 
 def test_ietf_parse_absent():
@@ -44,13 +48,14 @@ def test_ietf_lowest_rate_binds():
 
 def test_ietf_no_window():
     rl = Provider().parse_rate_limit({"x-ratelimit-limit": "500, 999"})
-    assert rl["window_s"] is None and rl["limit"] == 500
+    assert rl["window_s"] is None
+    assert rl["limit"] == 500
 
 
 # --------------------------------------------------------------------------- #
 # Roblox provider
 # --------------------------------------------------------------------------- #
-def test_roblox_auth_cookie_and_bearer(monkeypatch):
+def test_roblox_auth_cookie_and_bearer(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ROBLOX_COOKIE", "SEKRET")
     monkeypatch.setenv("ROBLOX_BEARER", "TOK")
     h = RobloxProvider().auth_headers()
@@ -58,7 +63,7 @@ def test_roblox_auth_cookie_and_bearer(monkeypatch):
     assert h["Authorization"] == "Bearer TOK"
 
 
-def test_roblox_auth_anonymous(monkeypatch):
+def test_roblox_auth_anonymous(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("ROBLOX_COOKIE", raising=False)
     monkeypatch.delenv("ROBLOX_BEARER", raising=False)
     assert RobloxProvider().auth_headers() == {}
@@ -92,7 +97,8 @@ def test_github_parse_epoch_reset():
         "x-ratelimit-reset": str(now + 1800),  # epoch, 30 min out
     }
     rl = GitHubProvider().parse_rate_limit(hdr)
-    assert rl["limit"] == 5000 and rl["remaining"] == 4999
+    assert rl["limit"] == 5000
+    assert rl["remaining"] == 4999
     assert rl["window_s"] == 3600  # injected known default
     assert 1795 <= rl["reset_s"] <= 1800  # epoch converted to seconds-until
 
@@ -104,7 +110,7 @@ def test_github_parse_custom_window():
     assert rl["window_s"] == 60
 
 
-def test_github_auth_token(monkeypatch):
+def test_github_auth_token(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_xxx")
     h = GitHubProvider().auth_headers()
     assert h["Authorization"] == "Bearer ghp_xxx"
