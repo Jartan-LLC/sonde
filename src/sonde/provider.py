@@ -4,8 +4,8 @@ A Provider captures everything that varies by API rather than by endpoint:
 
 - `classify(response)`: what counts as success or throttling.
 - `parse_rate_limit(headers)`: the API's rate-limit headers, normalised.
-- `auth_headers()` and `auth_params()`: credentials as headers or query parameters,
-  and `credentials()`: the raw secrets inside the headers, so logs can redact them.
+- `auth_headers()` and `auth_params()`: credentials as headers or query parameters.
+- `credentials()`: the raw secrets inside those headers, so logs can redact them.
 
 The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
 IETF `RateLimit`-draft header format, and no auth.
@@ -96,10 +96,11 @@ class Provider:
         return {}
 
     def credentials(self) -> list[str]:
-        """Return the raw secrets inside the auth headers, to redact from logs.
+        """Return the raw secrets inside `auth_headers()`, to redact from logs.
 
-        Override it with `auth_headers()`: a header holds its secret in a format only the
-        provider knows. Query-parameter values are redacted without being listed here.
+        A provider whose `auth_headers()` carries a credential overrides this too, since
+        only it knows the header's format. Query-parameter values are redacted without
+        being listed here.
         """
         return []
 

@@ -114,7 +114,7 @@ def build_session(headers: dict[str, str] | None = None) -> requests.Session:
         headers: Request headers; `BASE_HEADERS` when omitted.
 
     Returns:
-        A session with no retries and no cookie storage.
+        The session.
     """
     s = requests.Session()
     s.headers.update(headers or dict(BASE_HEADERS))

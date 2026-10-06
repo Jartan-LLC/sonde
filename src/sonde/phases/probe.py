@@ -12,6 +12,8 @@ import requests
 from sonde.core import Budget
 from sonde.endpoint import Endpoint
 
+__all__ = ["Probe"]
+
 
 @dataclass(frozen=True)
 class Probe:

@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python 3.14 support.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
-- `core.parse_response`, `core.request_args` and `provider.has_authoritative_limit` as public
-  functions.
+- `core.parse_response`, `core.request_args`, `logconfig.scrub` and
+  `provider.has_authoritative_limit` as public functions.
 - `Provider.credentials()`: the raw secrets in a provider's auth headers, which the CLI
   redacts from logs.
 
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoint's constructor.
 - `endpoint.get` and `endpoint.all_endpoints` include the built-in endpoints without an
   import of `sonde.endpoints` first.
-- `sonde.phases` is a package with a module per phase. Its public names import from
+- `sonde.phases` is a package, split into modules by phase. Its public names import from
   `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
 - Providers read their credentials from the environment when they are constructed.
 
@@ -44,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Logs redact the credentials each provider declares for its headers and its query
   parameters, including their percent-encoded forms in a quoted URL. The CLI no longer
-  guesses credentials from header formats, and a value too short to be a credential is
-  no longer redacted wherever it appears.
+  guesses credentials from header formats, and a configured value too short to be a real
+  credential is ignored, rather than masked everywhere it appears in the logs.
 - Error text from a response or a failed connection is scrubbed of credentials before it
   is truncated or logged, and so are the response headers the report records.
 

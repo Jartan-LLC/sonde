@@ -1,4 +1,4 @@
-"""The sustained-interval sweep: the fastest interval that stays unthrottled from empty."""
+"""The sustained-interval sweep: the fastest interval that stays unthrottled once drained."""
 
 from __future__ import annotations
 

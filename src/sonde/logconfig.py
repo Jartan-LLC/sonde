@@ -10,14 +10,14 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, override
 
-# Secret substrings to scrub from log output if a target echoes them back.
+# Secret substrings that `scrub` replaces in log output, error text and reported headers.
 _SECRETS: list[str] = []
 # A shorter value can't be a real credential, and redacting it would mangle ordinary text.
 _MIN_SECRET_LEN = 8
 
 
 def register_log_secrets(values: Iterable[str]) -> None:
-    """Register secret substrings to redact from all subsequent log output.
+    """Register secret substrings for `scrub` to replace from now on.
 
     Values too short to be a credential are skipped.
     """

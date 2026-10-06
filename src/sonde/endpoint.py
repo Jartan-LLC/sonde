@@ -1,15 +1,15 @@
 """The pluggable Endpoint interface.
 
 To test a new API endpoint you implement ONE subclass of `Endpoint` and register
-it. The generic probing engine (`sonde.phases`) drives everything else. A subclass must
-answer three questions:
+it. The generic probing engine (`sonde.phases`) drives everything else. A subclass
+answers three questions:
 
-  1. build_request(cursor) -> RequestSpec   How do I form a request (URL, params,
-                                             method) for a given paging position?
-  2. parse_page(response)  -> PageResult    Given a successful response, how many items
-                                             did I get and what's the next paging cursor?
-  3. total_items()         -> int | None    (optional) how many items exist in total,
-                                             so the tool can estimate scrape time.
+- `build_request(cursor) -> RequestSpec`: how to form the request for a paging
+  position.
+- `parse_page(response) -> PageResult`: how many items a successful response holds,
+  and the next paging cursor.
+- `total_items() -> int | None` (optional): how many items exist in total, so the tool
+  can estimate the scrape time.
 
 Plus optional CLI plumbing (add_arguments / from_args) and extra_headers().
 See endpoints/asset_owners.py for a worked example, and the README.
@@ -149,8 +149,8 @@ def all_endpoints() -> dict[str, type[Endpoint]]:
 def add_pagination_args(parser: argparse.ArgumentParser, *, page_max: int = 100) -> None:
     """Register the standard `--page-size` / `--total-items` flags on `parser`.
 
-    A paginated endpoint calls this from `add_arguments` and `pagination_from_args` from
-    `from_args`, so the flags are spelled the same on every endpoint.
+    Call this from a paginated endpoint's `add_arguments`, and `pagination_from_args` from
+    its `from_args`, so every endpoint spells the flags the same.
     """
     parser.add_argument(
         "--page-size", type=int, default=page_max, help=f"items per page; capped at {page_max}"

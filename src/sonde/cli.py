@@ -24,7 +24,8 @@ from sonde.provider import has_authoritative_limit
 
 logger = logging.getLogger(__name__)
 
-# Header names whose values are credentials, whichever part of the request set them.
+# Header names whose whole value is a credential, whether the provider or the endpoint
+# set the header.
 _SECRET_HEADER_KEYS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key"})
 
 
@@ -190,8 +191,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     budget = core.Budget(max_requests=args.max_requests)
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
-    # Keep our own credentials out of logs: a target can echo them back, and a connection
-    # error can quote the URL, with the query parameters percent-encoded.
+    # Keep our own credentials out of logs and the report: a target can echo them back,
+    # and a connection error can quote the URL, with the query parameters percent-encoded.
     params = list(provider.auth_params().values())
     register_log_secrets(
         [
