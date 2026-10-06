@@ -16,6 +16,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from sonde import core, endpoint, phases
 from sonde.logconfig import register_log_secrets, setup_logging
@@ -190,10 +191,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
     # Keep our own credentials out of logs: a target can echo them back, and a connection
-    # error can quote the URL with its query parameters.
+    # error can quote the URL, with the query parameters percent-encoded.
+    params = list(provider.auth_params().values())
     register_log_secrets(
         [
             *provider.credentials(),
+            *params,
+            *(quote(v, safe="") for v in params),
+            *(quote_plus(v) for v in params),
             *(v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS),
         ]
     )

@@ -1,4 +1,4 @@
-"""The sanity and sequential phases: one request, then back-to-back requests to the first throttle."""
+"""The sanity and sequential phases: one request, then back-to-back requests until throttled."""
 
 from __future__ import annotations
 

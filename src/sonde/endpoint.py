@@ -106,7 +106,10 @@ class Endpoint(ABC):
         return None
 
     def extra_headers(self) -> dict[str, str]:
-        """Endpoint-specific headers beyond the provider's auth headers."""
+        """Return endpoint-specific headers beyond the provider's auth headers.
+
+        Not for credentials: a provider declares those, so logs can redact them.
+        """
         return {}
 
 

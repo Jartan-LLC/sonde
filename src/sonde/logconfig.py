@@ -12,13 +12,19 @@ from typing import Any, override
 
 # Secret substrings to scrub from log output if a target echoes them back.
 _SECRETS: list[str] = []
+# A shorter value can't be a real credential, and redacting it would mangle ordinary text.
+_MIN_SECRET_LEN = 8
 
 
 def register_log_secrets(values: Iterable[str]) -> None:
-    """Register secret substrings to redact from all subsequent log output."""
+    """Register secret substrings to redact from all subsequent log output.
+
+    Values too short to be a credential are skipped.
+    """
     for v in values:
-        if v and v not in _SECRETS:
+        if len(v) >= _MIN_SECRET_LEN and v not in _SECRETS:
             _SECRETS.append(v)
+    _SECRETS.sort(key=len, reverse=True)  # so a shorter secret can't split a longer one
 
 
 def _scrub(text: str) -> str:

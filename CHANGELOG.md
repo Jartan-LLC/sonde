@@ -42,8 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Logs redact the credentials each provider declares, wherever the request carries them,
-  including query parameters. The CLI no longer guesses them from header formats.
+- Logs redact the credentials each provider declares for its headers and its query
+  parameters, including their percent-encoded forms in a quoted URL. The CLI no longer
+  guesses credentials from header formats, and a value too short to be a credential is
+  no longer redacted wherever it appears.
 
 ## [0.1.0] - 2026-07-02
 

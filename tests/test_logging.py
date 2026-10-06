@@ -205,38 +205,42 @@ class TestSecretRedaction:
         assert "***" in result
 
     def test_json_redacts_registered_secret(self):
-        register_log_secrets(["Bearer ghp_tok"])
-        result = JsonFormatter().format(_make_record("auth Bearer ghp_tok leaked"))
-        assert "ghp_tok" not in result
+        register_log_secrets(["Bearer ghp_token1"])
+        result = JsonFormatter().format(_make_record("auth Bearer ghp_token1 leaked"))
+        assert "ghp_token1" not in result
         assert json.loads(result)["message"] == "auth *** leaked"
 
     def test_redacts_secret_from_percent_args(self):
         """The real leak path (phases logs `error=%r`) puts the echoed secret in
         %-args, so scrubbing must run post-interpolation."""
-        register_log_secrets(["Bearer ghp_tok"])
+        register_log_secrets(["Bearer ghp_token1"])
         record = logging.LogRecord(
             name="sonde.test",
             level=logging.WARNING,
             pathname="t.py",
             lineno=1,
             msg="error=%r",
-            args=("Bearer ghp_tok",),
+            args=("Bearer ghp_token1",),
             exc_info=None,
         )
-        assert "ghp_tok" not in PlainFormatter().format(record)
-        assert "ghp_tok" not in JsonFormatter().format(record)
+        assert "ghp_token1" not in PlainFormatter().format(record)
+        assert "ghp_token1" not in JsonFormatter().format(record)
 
     def test_redacts_secret_in_exception_text(self):
         """A secret smuggled into a traceback (formatException path) is scrubbed."""
-        register_log_secrets(["ghp_tok"])
+        register_log_secrets(["ghp_token1"])
         record = _make_record("boom")
         try:
-            raise ValueError("leaked ghp_tok in message")
+            raise ValueError("leaked ghp_token1 in message")
         except ValueError:
             record.exc_info = sys.exc_info()
-        assert "ghp_tok" not in PlainFormatter().format(record)
-        assert "ghp_tok" not in JsonFormatter().format(record)
+        assert "ghp_token1" not in PlainFormatter().format(record)
+        assert "ghp_token1" not in JsonFormatter().format(record)
 
-    def test_empty_secret_is_ignored(self):
-        register_log_secrets(["", "real"])
-        assert logconfig._SECRETS == ["real"]
+    def test_values_too_short_to_be_credentials_are_ignored(self):
+        register_log_secrets(["", "x", "realsecret"])
+        assert logconfig._SECRETS == ["realsecret"]
+
+    def test_longer_secret_is_redacted_whole(self):
+        register_log_secrets(["abcdefgh", "abcdefgh12345"])
+        assert PlainFormatter().format(_make_record("tok abcdefgh12345")) == "tok ***"

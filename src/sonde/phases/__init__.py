@@ -3,14 +3,15 @@
 Every probing phase works against a `Probe` and drives its endpoint through
 `core.fetch` (or, for the concurrent burst, an async httpx client); the estimate does
 no I/O and works from the `Measurements`. Nothing here knows about any specific
-endpoint. Phases:
+endpoint. The phases, by module:
 
-  sanity     one request; read auth + x-ratelimit headers
-  sequential back-to-back requests until the first 429
-  burst      N concurrent requests (async httpx on one event loop)
-  recovery   after a 429, measure how long until requests succeed again
-  sweep      find the fastest sustained interval that stays 429-free (fallback)
-  estimate   turn the measurements into a safe rate + wall-clock estimate
+  sequential  sanity: one request, reading auth and the rate-limit headers; then
+              back-to-back requests until the first 429
+  burst       N concurrent requests, and the recovery window after the first 429
+  sweep       the fastest sustained interval that stays 429-free (a fallback)
+  estimate    a safe rate and wall-clock estimate from the measurements
+
+`probe` holds what the probing phases share.
 """
 
 from sonde.phases.burst import BurstConfig, phase_burst

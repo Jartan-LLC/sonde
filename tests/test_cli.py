@@ -13,6 +13,7 @@ import pytest
 from sonde import cli, core, endpoint
 from sonde.cli import build_parser
 from sonde.endpoint import Endpoint
+from sonde.endpoints.asset_owners import AssetOwnersEndpoint
 from sonde.provider import RobloxProvider
 from tests.helpers import RLH_420, FakeClock, Handler, make_bucket, make_burst_handler
 
@@ -232,34 +233,57 @@ def test_configured_secret_absent_from_logs(
     assert "***" in captured.err  # redaction actually fired, line not merely absent
 
 
+def _stderr_when_target_echoes(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], argv: list[str], echoed: str
+) -> str:
+    def echo(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
+        budget.take()
+        return core.Result(status=403, elapsed=0.01, error=f"denied: {echoed}")
+
+    monkeypatch.setattr(core, "fetch", echo)
+    with pytest.raises(SystemExit):
+        cli.main([*argv, "--output", "-", "--log-format", "json"])
+    return capfd.readouterr().err
+
+
+ASSET_OWNERS = ["asset-owners", "--asset-id", "1"]
+
+
 def test_query_param_credentials_are_scrubbed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    restore_root_logger: None,
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
 ):
-    """A credential a provider sends as a query parameter is redacted like a header one."""
+    """A provider's query-parameter credential is redacted, raw and percent-encoded."""
 
     def auth_params(self: RobloxProvider) -> dict[str, str]:
-        return {"key": "SUPERSECRETPARAM"}
-
-    def credentials(self: RobloxProvider) -> list[str]:
-        return ["SUPERSECRETPARAM"]
+        return {"key": "SECRET/PARAM VALUE"}
 
     monkeypatch.setattr(RobloxProvider, "auth_params", auth_params)
-    monkeypatch.setattr(RobloxProvider, "credentials", credentials)
+    for echoed in ("SECRET/PARAM VALUE", "SECRET%2FPARAM%20VALUE", "SECRET%2FPARAM+VALUE"):
+        err = _stderr_when_target_echoes(monkeypatch, capfd, ASSET_OWNERS, echoed)
+        assert echoed not in err
+        assert "***" in err
 
-    def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
-        budget.take()
-        return core.Result(status=403, elapsed=0.01, error="denied: SUPERSECRETPARAM")
 
-    monkeypatch.setattr(core, "fetch", echo_secret)
-    argv = ["asset-owners", "--asset-id", "1", "--output", "-", "--log-format", "json"]
-    with pytest.raises(SystemExit):
-        cli.main(argv)
-    captured = capfd.readouterr()
-    assert "SUPERSECRETPARAM" not in captured.err
-    assert "***" in captured.err
+def test_credential_named_endpoint_header_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
+):
+    def extra_headers(self: Endpoint) -> dict[str, str]:
+        return {"X-Api-Key": "WHOLEHEADERSECRET"}
+
+    monkeypatch.setattr(AssetOwnersEndpoint, "extra_headers", extra_headers)
+    err = _stderr_when_target_echoes(monkeypatch, capfd, ASSET_OWNERS, "WHOLEHEADERSECRET")
+    assert "WHOLEHEADERSECRET" not in err
+    assert "***" in err
+
+
+def test_github_token_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
+):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_SECRETTOKENVALUE")
+    argv = ["github-stargazers", "--owner", "a", "--repo", "b"]
+    err = _stderr_when_target_echoes(monkeypatch, capfd, argv, "ghp_SECRETTOKENVALUE")
+    assert "ghp_SECRETTOKENVALUE" not in err
+    assert "***" in err
 
 
 def test_unwritable_output_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
