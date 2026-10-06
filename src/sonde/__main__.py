@@ -1,5 +1,5 @@
 """Entry point: `python -m sonde <endpoint> [options]`."""
 
-from .cli import main
+from sonde.cli import main
 
 main()

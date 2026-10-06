@@ -1,5 +1,4 @@
-"""
-phases.py — the generic rate-limit probing engine.
+"""phases.py — the generic rate-limit probing engine.
 
 Every phase takes an `Endpoint` and drives it through `core.fetch` (or, for the
 concurrent burst, an async httpx client). Nothing here knows about any specific
@@ -18,31 +17,105 @@ endpoint. Phases:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import math
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import Any
 
 import httpx
 import requests
 
-from . import core
-from .core import Budget, Result
-from .endpoint import Endpoint
+from sonde import core
+from sonde.core import Budget, Result
+from sonde.endpoint import Endpoint
 
 logger = logging.getLogger(__name__)
+
+# Consecutive throttles that show the drain has emptied the bucket: one or two could
+# be transient.
+_DRAINED_AFTER = 3
+
+
+@dataclass(frozen=True)
+class Probe:
+    """What every phase works against: the endpoint, the shared budget, and the client setup."""
+
+    endpoint: Endpoint
+    budget: Budget
+    session: requests.Session
+    headers: dict[str, str]  # for the burst phase's own httpx client
+
+
+@dataclass(frozen=True)
+class BurstConfig:
+    """The concurrent burst phase's settings.
+
+    Attributes:
+        sizes: Concurrent burst sizes, in the order they run.
+        cooldown: Seconds between bursts when no window could be measured.
+        recovery_step: First poll delay when measuring the throttle window.
+        recovery_max: Seconds after which the window measurement gives up.
+        recovery_polls: Most polls the window measurement sends.
+    """
+
+    sizes: tuple[int, ...]
+    cooldown: float
+    recovery_step: float
+    recovery_max: float
+    recovery_polls: int
+
+
+@dataclass(frozen=True)
+class SweepConfig:
+    """The sustained-interval sweep's settings.
+
+    Attributes:
+        intervals: Inter-request intervals in seconds, slowest first.
+        probe_count: Paced requests per interval, sent after the drain.
+        drain_cap: Most rapid requests one drain may send.
+        tolerance: Highest fraction of throttled requests that still counts as clean.
+    """
+
+    intervals: tuple[float, ...]
+    probe_count: int
+    drain_cap: int
+    tolerance: float
+
+
+@dataclass
+class Measurements:
+    """What the earlier phases found, which the estimate turns into a rate."""
+
+    page_count: int  # items per successful page
+    rate_limit: dict[str, Any]  # the provider's parse of the rate-limit headers
+    seq_summary: dict[str, Any] = field(default_factory=dict[str, Any])
+    burst_results: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    measured_window: float | None = None
+    swept_interval: float | None = None
+
+
+def _cursors(cursor_pool: list[Any]) -> Iterator[Any]:
+    """Cycle through the collected cursors, or yield None forever when there are none."""
+    return itertools.cycle(cursor_pool or [None])
 
 
 # --------------------------------------------------------------------------- #
 # Sanity / auth + header read
 # --------------------------------------------------------------------------- #
-def phase_sanity(
-    session: requests.Session, endpoint: Endpoint, budget: Budget
-) -> tuple[Result, dict[str, Any]]:
+def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
+    """Send one request, report auth and the rate-limit headers.
+
+    Returns:
+        The response, and the provider's parse of its rate-limit headers.
+    """
     logger.info("\n== PHASE: sanity / auth ==")
-    r = core.fetch(session, endpoint, None, budget)
+    endpoint = probe.endpoint
+    r = core.fetch(probe.session, endpoint, None, probe.budget)
     if r.rclass == core.RClass.OK:
         logger.info(
             "  OK  status=%s  items_returned=%s  latency=%.0fms",
@@ -57,11 +130,11 @@ def phase_sanity(
         logger.warning(
             "  status=%s (%s)  latency=%.0fms  error=%r",
             r.status,
-            r.rclass.value,
+            r.rclass,
             r.elapsed * 1000,
             r.error,
         )
-        if r.status in (401, 403):
+        if r.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             logger.warning(
                 "  -> looks like an auth problem. Set the provider's credential env var."
             )
@@ -101,21 +174,24 @@ def phase_sanity(
 # --------------------------------------------------------------------------- #
 # Sequential sustained probe
 # --------------------------------------------------------------------------- #
-def phase_seq(
-    session: requests.Session, endpoint: Endpoint, budget: Budget, cap: int
-) -> tuple[dict[str, Any], list[Any]]:
+def phase_seq(probe: Probe, cap: int) -> tuple[dict[str, Any], list[Any]]:
+    """Send back-to-back requests until the first throttle, the budget, or `cap`.
+
+    Returns:
+        The phase's summary, and the cursors it collected for the later phases.
+    """
     logger.info("\n== PHASE: sequential sustained probe ==")
     logger.info("  up to %s back-to-back requests until the first 429...", cap)
     cursor = None
-    cursor_pool = []
+    cursor_pool: list[Any] = []
     ok = 0
     first_429 = None
     t_start = time.perf_counter()
-    latencies = []
+    latencies: list[float] = []
     last = None
 
     for i in range(cap):
-        r = core.fetch(session, endpoint, cursor, budget)
+        r = core.fetch(probe.session, probe.endpoint, cursor, probe.budget)
         last = r
         if r.rclass == core.RClass.OK:
             ok += 1
@@ -174,14 +250,14 @@ def _recovery_steps(
     start_step: float, max_wait: float, max_polls: int, cursor_pool: list[Any]
 ) -> Generator[tuple[float, Any, float], None, None]:
     """Yield (step_seconds, cursor, cumulative_wait_s) for each recovery poll.
-    Pure state machine — no I/O. Callers sleep then fetch after each yield."""
+
+    A pure state machine with no I/O: callers sleep, then fetch, after each yield.
+    """
     step = start_step
     waited = 0.0
-    i = 0
+    cursors = _cursors(cursor_pool)
     for _ in range(max_polls):
-        cur = cursor_pool[i % len(cursor_pool)] if cursor_pool else None
-        i += 1
-        yield step, cur, waited + step
+        yield step, next(cursors), waited + step
         waited += step
         if waited >= max_wait:
             break
@@ -192,107 +268,125 @@ def _recovery_steps(
 # Burst probe (async httpx / asyncio)
 # --------------------------------------------------------------------------- #
 def phase_burst(
-    headers: dict[str, str],
-    endpoint: Endpoint,
-    budget: Budget,
-    sizes: list[int],
-    cooldown: float,
-    cursor_pool: list[Any],
-    recovery_step: float,
-    recovery_max: float,
-    recovery_polls: int,
+    probe: Probe, cursor_pool: list[Any], config: BurstConfig
 ) -> tuple[list[dict[str, Any]], float | None]:
-    if not sizes:
+    """Fire bursts of concurrent requests, measuring the throttle window on the first.
+
+    Returns:
+        One report row per burst, and the measured window in seconds (None if no burst
+        was throttled or the window couldn't be measured).
+    """
+    if not config.sizes:
         return [], None
     logger.info("\n== PHASE: concurrent burst probe [httpx / asyncio] ==")
     logger.info("  fires N concurrent requests on one event loop; reports launch spread.")
+    return asyncio.run(_run_bursts(probe, cursor_pool, config))
 
-    async def afetch(client, cursor):
-        if not budget.take():
-            return core.Result(
-                status=-1, elapsed=0.0, rclass=core.RClass.BUDGET, error="request budget exhausted"
-            )
-        provider = endpoint.provider()
-        spec = endpoint.build_request(cursor)
-        params = {**provider.auth_params(), **(spec.params or {})}
-        t0 = time.perf_counter()
-        try:
-            resp = await client.request(spec.method, spec.url, params=params, json=spec.json_body)
-        except httpx.RequestError as e:
-            return core.Result(
-                status=0, elapsed=time.perf_counter() - t0, rclass=core.RClass.ERROR, error=str(e)
-            )
-        return core._parse_response(resp, time.perf_counter() - t0, endpoint)
 
-    async def recovery(client):
-        logger.info(
-            "    measuring recovery window (adaptive, start≈%ss, ≤%s polls, ≤%ss)...",
-            recovery_step,
-            recovery_polls,
-            recovery_max,
+async def _afetch(probe: Probe, client: httpx.AsyncClient, cursor: Any) -> Result:
+    """The async twin of `core.fetch`."""
+    if not probe.budget.take():
+        return core.Result(
+            status=-1, elapsed=0.0, rclass=core.RClass.BUDGET, error="request budget exhausted"
         )
-        waited = 0.0
-        for step, cur, waited in _recovery_steps(
-            recovery_step, recovery_max, recovery_polls, cursor_pool
-        ):
-            await asyncio.sleep(step)
-            r = await afetch(client, cur)
-            if r.rclass == core.RClass.OK:
-                logger.info("    recovered after ~%.2fs", waited)
-                return waited
-            if r.rclass == core.RClass.BUDGET:
-                logger.warning("    budget exhausted during recovery probe.")
-                return None
-        logger.info("    no recovery within %.1fs / %s polls.", waited, recovery_polls)
-        return None
+    endpoint = probe.endpoint
+    spec = endpoint.build_request(cursor)
+    params = {**endpoint.provider().auth_params(), **(spec.params or {})}
+    t0 = time.perf_counter()
+    try:
+        resp = await client.request(spec.method, spec.url, params=params, json=spec.json_body)
+    except httpx.RequestError as e:
+        return core.Result(
+            status=0, elapsed=time.perf_counter() - t0, rclass=core.RClass.ERROR, error=str(e)
+        )
+    return core.parse_response(resp, time.perf_counter() - t0, endpoint)
 
-    async def run():
-        results = []
-        measured_window = None
-        idx_base = 0
-        limits = httpx.Limits(max_connections=max(sizes), max_keepalive_connections=max(sizes))
-        async with httpx.AsyncClient(
-            headers=headers, timeout=30, follow_redirects=True, limits=limits
-        ) as client:
-            for n in sizes:
-                if budget.remaining() < n:
-                    logger.warning(
-                        "  skipping burst of %s: only %s requests left in budget.",
-                        n,
-                        budget.remaining(),
-                    )
-                    break
-                launches = []
 
-                async def one(i):
-                    cur = cursor_pool[(idx_base + i) % len(cursor_pool)] if cursor_pool else None
-                    launches.append(time.perf_counter())
-                    return await afetch(client, cur)
+async def _measure_recovery(
+    probe: Probe, client: httpx.AsyncClient, cursor_pool: list[Any], config: BurstConfig
+) -> float | None:
+    """Poll with growing delays until a request succeeds; return the wait, or None."""
+    logger.info(
+        "    measuring recovery window (adaptive, start≈%ss, ≤%s polls, ≤%ss)...",
+        config.recovery_step,
+        config.recovery_polls,
+        config.recovery_max,
+    )
+    waited = 0.0
+    for step, cur, waited in _recovery_steps(
+        config.recovery_step, config.recovery_max, config.recovery_polls, cursor_pool
+    ):
+        await asyncio.sleep(step)
+        r = await _afetch(probe, client, cur)
+        if r.rclass == core.RClass.OK:
+            logger.info("    recovered after ~%.2fs", waited)
+            return waited
+        if r.rclass == core.RClass.BUDGET:
+            logger.warning("    budget exhausted during recovery probe.")
+            return None
+    logger.info("    no recovery within %.1fs / %s polls.", waited, config.recovery_polls)
+    return None
 
-                t0 = time.perf_counter()
-                batch = await asyncio.gather(*[one(i) for i in range(n)])
-                elapsed = time.perf_counter() - t0
-                idx_base += n
-                spread_ms = (max(launches) - min(launches)) * 1000 if launches else 0.0
 
-                row = _summarise_burst(n, batch, elapsed, spread_ms)
-                # recovery is async here, so measure the window inline on the first
-                # throttled burst rather than inside the bookkeeping helper.
-                if row["throttled_429"] > 0 and measured_window is None:
-                    if row["max_retry_after"]:
-                        measured_window = row["max_retry_after"]
-                        logger.info("    server-provided window: %.0fs", measured_window)
-                    else:
-                        measured_window = await recovery(client)
-                results.append(row)
+async def _one_burst(
+    probe: Probe, client: httpx.AsyncClient, cursors: list[Any]
+) -> tuple[list[Result], float, float]:
+    """Send one request per cursor at once.
 
-                wait = measured_window or row["max_retry_after"] or cooldown
-                if n != sizes[-1] and budget.remaining() > 0:
-                    logger.debug("    cooling down %.0fs before next burst...", wait)
-                    await asyncio.sleep(wait)
-        return results, measured_window
+    Returns:
+        The results, the wall time in seconds, and the launch spread in milliseconds.
+    """
+    launches: list[float] = []
 
-    return asyncio.run(run())
+    async def one(cursor: Any) -> Result:
+        launches.append(time.perf_counter())
+        return await _afetch(probe, client, cursor)
+
+    t0 = time.perf_counter()
+    batch = await asyncio.gather(*[one(cur) for cur in cursors])
+    elapsed = time.perf_counter() - t0
+    spread_ms = (max(launches) - min(launches)) * 1000 if launches else 0.0
+    return batch, elapsed, spread_ms
+
+
+async def _run_bursts(
+    probe: Probe, cursor_pool: list[Any], config: BurstConfig
+) -> tuple[list[dict[str, Any]], float | None]:
+    results: list[dict[str, Any]] = []
+    measured_window: float | None = None
+    cursors = _cursors(cursor_pool)
+    biggest = max(config.sizes)
+    limits = httpx.Limits(max_connections=biggest, max_keepalive_connections=biggest)
+    async with httpx.AsyncClient(
+        headers=probe.headers, timeout=30, follow_redirects=True, limits=limits
+    ) as client:
+        for n in config.sizes:
+            if probe.budget.remaining() < n:
+                logger.warning(
+                    "  skipping burst of %s: only %s requests left in budget.",
+                    n,
+                    probe.budget.remaining(),
+                )
+                break
+            batch, elapsed, spread_ms = await _one_burst(
+                probe, client, list(itertools.islice(cursors, n))
+            )
+            row = _summarise_burst(n, batch, elapsed, spread_ms)
+            # Recovery is async, so the window is measured here, on the first throttled
+            # burst, not in the bookkeeping helper.
+            if row["throttled_429"] > 0 and measured_window is None:
+                if row["max_retry_after"]:
+                    measured_window = row["max_retry_after"]
+                    logger.info("    server-provided window: %.0fs", measured_window)
+                else:
+                    measured_window = await _measure_recovery(probe, client, cursor_pool, config)
+            results.append(row)
+
+            wait = measured_window or row["max_retry_after"] or config.cooldown
+            if n != config.sizes[-1] and probe.budget.remaining() > 0:
+                logger.debug("    cooling down %.0fs before next burst...", wait)
+                await asyncio.sleep(wait)
+    return results, measured_window
 
 
 def _summarise_burst(
@@ -301,15 +395,18 @@ def _summarise_burst(
     elapsed: float,
     spread_ms: float,
 ) -> dict[str, Any]:
-    """Count one burst's outcomes and build its report row. Window/recovery decisions
-    live at the call site (the async burst measures recovery inline)."""
+    """Count one burst's outcomes and build its report row.
+
+    Window and recovery decisions live at the call site, which measures recovery
+    inline.
+    """
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
     c429 = sum(1 for r in batch if r.rclass == core.RClass.THROTTLED)
     other = n - ok - c429
     retry_afters = [r.retry_after for r in batch if r.retry_after]
     max_ra = max(retry_afters) if retry_afters else None
 
-    row = {
+    row: dict[str, Any] = {
         "burst_size": n,
         "ok_200": ok,
         "throttled_429": c429,
@@ -326,7 +423,7 @@ def _summarise_burst(
         other,
         elapsed,
         spread_ms,
-        max_ra if max_ra else "none",
+        max_ra or "none",
     )
     return row
 
@@ -335,66 +432,41 @@ def _summarise_burst(
 # Sustained-interval sweep (fallback when headers are absent)
 # --------------------------------------------------------------------------- #
 def phase_sweep(
-    session: requests.Session,
-    endpoint: Endpoint,
-    budget: Budget,
-    cursor_pool: list[Any],
-    intervals: list[float],
-    probe_count: int,
-    drain_cap: int,
-    tolerance: float,
+    probe: Probe, cursor_pool: list[Any], config: SweepConfig
 ) -> tuple[float | None, list[dict[str, Any]]]:
     """Find the fastest inter-request interval that stays 429-free at STEADY STATE.
+
     Drains the bucket first (rapid requests until empty), then paces `probe_count`
     requests from empty. A too-fast interval throttles immediately from empty; a
     sustainable one stays clean. If the bucket can't be emptied within `drain_cap`,
     the measurement is invalid, so the sweep aborts with NO floor rather than lie.
 
-    Returns (fastest_safe_interval_seconds, rows)."""
+    Returns:
+        The fastest clean interval in seconds (None if none was found), and one row
+        per interval tried.
+    """
     logger.info("\n== PHASE: sustained-interval sweep ==")
     logger.info(
         "  drains bucket (until empty, cap %s) then paces %s reqs/interval, slow->fast.",
-        drain_cap,
-        probe_count,
+        config.drain_cap,
+        config.probe_count,
     )
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     fastest_safe = None
-    idx = 0
+    cursors = _cursors(cursor_pool)
 
-    def next_cursor():
-        nonlocal idx
-        cur = cursor_pool[idx % len(cursor_pool)] if cursor_pool else None
-        idx += 1
-        return cur
-
-    def drain():
-        """Fire rapid requests until empty (3 consecutive throttles) or the cap."""
-        consecutive = 0
-        used = 0
-        for _ in range(drain_cap):
-            r = core.fetch(session, endpoint, next_cursor(), budget)
-            used += 1
-            if r.rclass == core.RClass.BUDGET:
-                return used, False
-            consecutive = consecutive + 1 if r.rclass == core.RClass.THROTTLED else 0
-            if consecutive >= 3:
-                return used, True
-        # Cap exhausted without 3 consecutive throttles -> never confirmed empty. A lone
-        # or paired 429 could be transient, so don't claim the bucket was drained.
-        return used, False
-
-    for interval in intervals:  # sorted slow -> fast (descending seconds)
-        if budget.remaining() < drain_cap + probe_count:
+    for interval in config.intervals:  # sorted slow -> fast (descending seconds)
+        if probe.budget.remaining() < config.drain_cap + config.probe_count:
             logger.warning(
                 "  stopping sweep: budget (%s) too low for drain+probe (%s+%s).",
-                budget.remaining(),
-                drain_cap,
-                probe_count,
+                probe.budget.remaining(),
+                config.drain_cap,
+                config.probe_count,
             )
             break
 
-        drained_reqs, emptied = drain()
+        drained_reqs, emptied = _drain(probe, cursors, config.drain_cap)
         # Drain is interval-independent: if it fails once it fails for all. Abort with
         # no floor rather than report a fake-fast one from coasting on spare quota.
         if not emptied:
@@ -404,30 +476,15 @@ def phase_sweep(
                 "from empty here, so it won't report one. Trust the rate-limit headers, "
                 "or raise --sweep-drain above the limit (costly).",
                 drained_reqs,
-                drain_cap,
+                config.drain_cap,
             )
             return None, rows
 
         time.sleep(interval)  # seed ~1 token so request #1 isn't a guaranteed 429
-
-        throttled = 0
-        sent = 0
-        t_phase = time.perf_counter()
-        for _ in range(probe_count):
-            t_req = time.perf_counter()
-            r = core.fetch(session, endpoint, next_cursor(), budget)
-            if r.rclass == core.RClass.BUDGET:
-                break
-            sent += 1
-            if r.rclass == core.RClass.THROTTLED:
-                throttled += 1
-            slack = interval - (time.perf_counter() - t_req)
-            if slack > 0:
-                time.sleep(slack)
-        dur = time.perf_counter() - t_phase
+        sent, throttled, dur = _paced(probe, cursors, interval, config.probe_count)
         eff_rate = sent / dur if dur > 0 else 0
         frac = (throttled / sent) if sent else 1.0
-        clean = frac <= tolerance
+        clean = frac <= config.tolerance
 
         rows.append(
             {
@@ -472,47 +529,86 @@ def phase_sweep(
     return fastest_safe, rows
 
 
+def _drain(probe: Probe, cursors: Iterator[Any], cap: int) -> tuple[int, bool]:
+    """Send rapid requests until the bucket is empty or `cap` is reached.
+
+    Returns:
+        The requests sent, and whether the bucket was confirmed empty.
+    """
+    consecutive = 0
+    used = 0
+    for _ in range(cap):
+        r = core.fetch(probe.session, probe.endpoint, next(cursors), probe.budget)
+        used += 1
+        if r.rclass == core.RClass.BUDGET:
+            return used, False
+        consecutive = consecutive + 1 if r.rclass == core.RClass.THROTTLED else 0
+        if consecutive >= _DRAINED_AFTER:
+            return used, True
+    return used, False
+
+
+def _paced(
+    probe: Probe, cursors: Iterator[Any], interval: float, count: int
+) -> tuple[int, int, float]:
+    """Send `count` requests `interval` seconds apart.
+
+    Returns:
+        The requests sent, how many were throttled, and the wall time in seconds.
+    """
+    throttled = 0
+    sent = 0
+    t_phase = time.perf_counter()
+    for _ in range(count):
+        t_req = time.perf_counter()
+        r = core.fetch(probe.session, probe.endpoint, next(cursors), probe.budget)
+        if r.rclass == core.RClass.BUDGET:
+            break
+        sent += 1
+        if r.rclass == core.RClass.THROTTLED:
+            throttled += 1
+        slack = interval - (time.perf_counter() - t_req)
+        if slack > 0:
+            time.sleep(slack)
+    return sent, throttled, time.perf_counter() - t_phase
+
+
 # --------------------------------------------------------------------------- #
 # Estimate
 # --------------------------------------------------------------------------- #
-def phase_estimate(
-    endpoint: Endpoint,
-    page_count: int,
-    seq_summary: dict[str, Any],
-    burst_results: list[dict[str, Any]],
-    measured_window: float | None,
-    swept_interval: float | None,
-    margin: float,
-    rl: dict[str, Any],
-) -> dict[str, Any]:
-    logger.info("\n== PHASE: rate + wall-clock estimate ==")
+@dataclass
+class _Rate:
+    """A safe request rate and how it was derived."""
 
-    safe_rate_per_min = None
-    basis = None
-    recommended_interval = None
-    header_limit = header_window = None
+    per_min: float | None = None
+    interval: float | None = None  # recommended seconds between requests, when paced
+    basis: str | None = None
+    header_limit: int | None = None
+    header_window: float | None = None
 
-    # Priority 0: authoritative rate-limit headers.
-    if rl and rl.get("limit") and rl.get("window_s"):
-        header_limit, header_window = rl["limit"], rl["window_s"]
-        max_per_min = header_limit * 60.0 / header_window
-        even = header_window / header_limit
-        recommended_interval = even / margin
-        safe_rate_per_min = 60.0 / recommended_interval
-        basis = (
-            f"AUTHORITATIVE headers: {header_limit}/{header_window}s"
-            f" ({max_per_min:.0f}/min ceiling)"
-        )
+
+def _safe_rate(m: Measurements, margin: float) -> _Rate:
+    """Pick the most trustworthy source of a safe rate, applying `margin`.
+
+    Priority: authoritative headers, the swept floor, the inferred token bucket,
+    then the sequential fallbacks.
+    """
+    rl = m.rate_limit
+    if rl.get("limit") and rl.get("window_s"):
+        limit, window = rl["limit"], rl["window_s"]
+        max_per_min = limit * 60.0 / window
+        even = window / limit
+        interval = even / margin
         logger.info(
             "  RATE LIMIT (headers): %s per %ss = %.0f req/min ceiling",
-            header_limit,
-            header_window,
+            limit,
+            window,
             max_per_min,
         )
         logger.info(
             "    even-pace interval : %.3fs (recommend %.3fs with %s%% margin)",
             even,
-            recommended_interval,
+            interval,
             round(margin * 100),
         )
         logger.info(
@@ -520,60 +616,86 @@ def phase_estimate(
             "(reset_s is normalised seconds-until); when remaining hits 0, wait reset_s "
             "seconds. Retry-After is a backoff hint, not the window length."
         )
-
-    # Priority 1: swept floor.
-    if safe_rate_per_min is None and swept_interval:
-        recommended_interval = swept_interval / margin
-        safe_rate_per_min = 60.0 / recommended_interval
-        basis = (
-            f"measured floor {swept_interval}s -> {recommended_interval:.3f}s "
-            f"({round(margin * 100)}% of measured max)"
+        return _Rate(
+            per_min=60.0 / interval,
+            interval=interval,
+            basis=f"AUTHORITATIVE headers: {limit}/{window}s ({max_per_min:.0f}/min ceiling)",
+            header_limit=limit,
+            header_window=window,
         )
-    # Priority 2: token-bucket inference.
-    if safe_rate_per_min is None:
-        fully_ok = [r for r in burst_results if r["throttled_429"] == 0]
-        if fully_ok and measured_window and measured_window > 0:
-            bucket = max(r["burst_size"] for r in fully_ok)
-            safe_rate_per_min = (bucket / measured_window) * 60.0 * margin
-            basis = f"INFERRED bucket≈{bucket}/window≈{measured_window:.1f}s (model-dependent)"
-    # Priority 3/4: sequential fallbacks.
-    if safe_rate_per_min is None and seq_summary.get("first_429_at_request"):
-        n = seq_summary["successful_before_429"]
-        t = seq_summary["wall_seconds"] or 1
-        safe_rate_per_min = (n / t) * 60.0 * margin
-        basis = f"sequential {n} req / {t:.1f}s"
-    if safe_rate_per_min is None and seq_summary.get("seq_req_per_sec"):
+
+    if m.swept_interval:
+        interval = m.swept_interval / margin
+        return _Rate(
+            per_min=60.0 / interval,
+            interval=interval,
+            basis=(
+                f"measured floor {m.swept_interval}s -> {interval:.3f}s "
+                f"({round(margin * 100)}% of measured max)"
+            ),
+        )
+
+    fully_ok = [r for r in m.burst_results if r["throttled_429"] == 0]
+    if fully_ok and m.measured_window and m.measured_window > 0:
+        bucket = max(r["burst_size"] for r in fully_ok)
+        return _Rate(
+            per_min=(bucket / m.measured_window) * 60.0 * margin,
+            basis=f"INFERRED bucket≈{bucket}/window≈{m.measured_window:.1f}s (model-dependent)",
+        )
+
+    seq = m.seq_summary
+    if seq.get("first_429_at_request"):
+        n = seq["successful_before_429"]
+        t = seq["wall_seconds"] or 1
+        return _Rate(per_min=(n / t) * 60.0 * margin, basis=f"sequential {n} req / {t:.1f}s")
+    if seq.get("seq_req_per_sec"):
         # Nothing throttled anywhere, so there's no measured ceiling. Treat observed
         # throughput as a soft ceiling, apply --margin, then halve again for the
         # extra uncertainty — this is the most conservative rung by construction.
         factor = 0.5 * margin
-        safe_rate_per_min = seq_summary["seq_req_per_sec"] * 60.0 * factor
-        basis = f"no 429 observed; {factor:.0%} of measured sequential throughput"
+        return _Rate(
+            per_min=seq["seq_req_per_sec"] * 60.0 * factor,
+            basis=f"no 429 observed; {factor:.0%} of measured sequential throughput",
+        )
+    return _Rate()
+
+
+def phase_estimate(endpoint: Endpoint, m: Measurements, margin: float) -> dict[str, Any]:
+    """Turn the measurements into a safe rate and, with a known total, a scrape time.
+
+    Args:
+        endpoint: The endpoint probed; its `total_items()` sizes the scrape.
+        m: What the earlier phases measured.
+        margin: The fraction of the measured ceiling to recommend, such as 0.8.
+
+    Returns:
+        The estimate section of the report.
+    """
+    logger.info("\n== PHASE: rate + wall-clock estimate ==")
+    rate = _safe_rate(m, margin)
 
     total_items = endpoint.total_items()
     total_pages = None
-    if page_count > 0 and total_items is not None:
-        total_pages = math.ceil(total_items / page_count)
+    if m.page_count > 0 and total_items is not None:
+        total_pages = math.ceil(total_items / m.page_count)
         logger.info("  total items         : %s", format(total_items, ","))
-        logger.info("  items per page      : %s", page_count)
+        logger.info("  items per page      : %s", m.page_count)
         logger.info("  => total requests   : %s", format(total_pages, ","))
     else:
         logger.info(
             "  total items unknown (no endpoint total / no page count) -> reporting rate only."
         )
 
-    if safe_rate_per_min:
-        if recommended_interval:
+    if rate.per_min:
+        if rate.interval:
             logger.info(
-                "  recommended interval: %.3fs  (~%.0f req/min)",
-                recommended_interval,
-                safe_rate_per_min,
+                "  recommended interval: %.3fs  (~%.0f req/min)", rate.interval, rate.per_min
             )
         else:
-            logger.info("  safe rate estimate  : ~%.0f req/min", safe_rate_per_min)
-        logger.info("  basis               : %s", basis)
+            logger.info("  safe rate estimate  : ~%.0f req/min", rate.per_min)
+        logger.info("  basis               : %s", rate.basis)
         if total_pages is not None:
-            minutes = total_pages / safe_rate_per_min
+            minutes = total_pages / rate.per_min
             logger.info("  => full scrape time : ~%.0f min  (~%.1f h)", minutes, minutes / 60)
     else:
         logger.info(
@@ -583,18 +705,18 @@ def phase_estimate(
 
     return {
         "total_items": total_items,
-        "items_per_page": page_count,
+        "items_per_page": m.page_count,
         "total_pages": total_pages,
-        "header_limit": header_limit,
-        "header_window_s": header_window,
-        "swept_floor_interval_s": swept_interval,
-        "recommended_interval_s": round(recommended_interval, 4) if recommended_interval else None,
-        "measured_window_seconds": round(measured_window, 2) if measured_window else None,
-        "safe_rate_per_min": round(safe_rate_per_min, 1) if safe_rate_per_min else None,
-        "safe_rate_basis": basis,
+        "header_limit": rate.header_limit,
+        "header_window_s": rate.header_window,
+        "swept_floor_interval_s": m.swept_interval,
+        "recommended_interval_s": round(rate.interval, 4) if rate.interval else None,
+        "measured_window_seconds": round(m.measured_window, 2) if m.measured_window else None,
+        "safe_rate_per_min": round(rate.per_min, 1) if rate.per_min else None,
+        "safe_rate_basis": rate.basis,
         "estimated_minutes": (
-            round(total_pages / safe_rate_per_min, 1)
-            if (total_pages is not None and safe_rate_per_min)
+            round(total_pages / rate.per_min, 1)
+            if (total_pages is not None and rate.per_min)
             else None
         ),
     }

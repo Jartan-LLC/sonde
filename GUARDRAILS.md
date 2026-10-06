@@ -25,6 +25,10 @@ every Claude Code session loads it; Liza agents also enforce the tiers (Liza's `
 
 - Read README.md and relevant docs before modifying unfamiliar code.
 - Update docs and skills alongside code changes.
+- Write Google-style docstrings for public modules, classes, and functions (enforced by
+  ruff `D`) and full type annotations (enforced by pyright `strict`).
+- Keep `>>>` examples in those docstrings runnable — `make test` executes every one under
+  `src/`, so a published example can't drift from its code.
 - Write plans to `.claude/workspace/` in the project root for non-trivial changes.
 - Don't wrap things the underlying library already expresses clearly.
 - Don't speculate about fixes — investigate first, then propose.

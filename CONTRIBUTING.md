@@ -21,8 +21,9 @@ Docker (actionlint, lychee) and Node (markdownlint) — the devcontainer has bot
 make check
 ```
 
-Runs CI's lint, test, build and audit checks. CI also runs the tests on each supported
-Python, builds the Docker image, and builds the dev container when its inputs change.
+Runs every CI check: lint, typecheck, test, build, audit and docs. CI also runs the tests
+on each supported Python, builds the Docker image, and builds the dev container when its
+inputs change.
 Everything but the advisory audit must pass before merge.
 
 ## Adding an endpoint
@@ -35,4 +36,6 @@ See [Adding an Endpoint](README.md#adding-an-endpoint) in the README. In short: 
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`).
 - User-facing changes go in `CHANGELOG.md` under `## [Unreleased]`.
+- `>>>` examples in docstrings run as tests, so keep them executable and their
+  expected output exact — the suite fails when one drifts from the code.
 - Report security issues privately via [SECURITY.md](.github/SECURITY.md), not a public issue.

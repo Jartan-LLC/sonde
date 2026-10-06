@@ -1,5 +1,4 @@
-"""
-endpoint.py — the pluggable Endpoint interface.
+"""endpoint.py — the pluggable Endpoint interface.
 
 To test a new API endpoint you implement ONE subclass of `Endpoint` and register
 it. The generic probing engine (phases.py) drives everything else. A subclass must
@@ -23,17 +22,17 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Self
 
-from .provider import Provider
+from sonde.provider import Provider
 
 __all__ = [
     "Endpoint",
-    "RequestSpec",
     "PageResult",
-    "register",
-    "get",
-    "all_endpoints",
+    "RequestSpec",
     "add_pagination_args",
+    "all_endpoints",
+    "get",
     "pagination_from_args",
+    "register",
 ]
 
 
@@ -42,7 +41,7 @@ class RequestSpec:
     """A single HTTP request to issue."""
 
     url: str
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict[str, Any])
     method: str = "GET"
     json_body: Any = None
 
@@ -56,48 +55,57 @@ class PageResult:
 
 
 class Endpoint(ABC):
+    """One API endpoint to probe: how to request a page and how to read it."""
+
     name: str = "base"  # CLI subcommand name (unique)
     help: str = "abstract endpoint"  # one-line description for --help
+    _provider_instance: Provider | None = None
 
     # --- CLI plumbing (override as needed) ---
-    @classmethod
+    @classmethod  # noqa: B027 - an optional hook
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Register endpoint-specific CLI arguments on `parser`."""
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> Self:
+    def from_args(cls, args: argparse.Namespace) -> Self:  # noqa: ARG003 - the default takes none
         """Build an instance from parsed CLI args."""
         return cls()
 
     # --- provider (which API's rules apply) ---
     def _make_provider(self) -> Provider:
-        """Return the Provider for this endpoint's API. Override to use Roblox/GitHub/
-        etc. Default is the generic provider (200/429, IETF headers, no auth)."""
+        """Return the Provider for this endpoint's API.
+
+        The default is the generic provider: 200/429, IETF headers, no auth. Override it
+        for an API with its own rules, such as Roblox's or GitHub's.
+        """
         return Provider()
 
     def provider(self) -> Provider:
         """Memoised provider instance for this endpoint."""
-        prov = self.__dict__.get("_provider_instance")
-        if prov is None:
-            prov = self._make_provider()
-            self.__dict__["_provider_instance"] = prov
-        return prov
+        if self._provider_instance is None:
+            self._provider_instance = self._make_provider()
+        return self._provider_instance
 
     # --- required behaviour ---
     @abstractmethod
-    def build_request(self, cursor: Any) -> RequestSpec: ...
+    def build_request(self, cursor: Any) -> RequestSpec:
+        """Return the request for the page at `cursor` (None for the first page)."""
 
     @abstractmethod
     def parse_page(self, response: Any) -> PageResult:
-        """Extract item count + next cursor from a successful RESPONSE object
-        (requests.Response / httpx.Response). Call response.json() for JSON bodies;
-        read response.headers for header-based pagination (e.g. a Link header)."""
-        ...
+        """Read the item count and next cursor from a successful response.
+
+        `response` is a `requests.Response` or an `httpx.Response`. Call
+        `response.json()` for a JSON body; read `response.headers` for header-based
+        pagination, such as a Link header.
+        """
 
     # --- optional behaviour ---
     def total_items(self) -> int | None:
-        """Known/estimated total items to scrape, for the wall-clock estimate.
-        Return None if unknown (the tool will then report rate only)."""
+        """Return the known or estimated item total, for the wall-clock estimate.
+
+        None means unknown, and the report gives the rate only.
+        """
         return None
 
     def extra_headers(self) -> dict[str, str]:
@@ -111,7 +119,7 @@ class Endpoint(ABC):
 _REGISTRY: dict[str, type[Endpoint]] = {}
 
 
-def register(cls: type[Endpoint]) -> type[Endpoint]:
+def register[E: type[Endpoint]](cls: E) -> E:
     """Class decorator: register an Endpoint subclass under its `name`."""
     if not getattr(cls, "name", None) or cls.name == "base":
         raise ValueError(f"{cls.__name__} must set a unique `name`")
@@ -122,10 +130,12 @@ def register(cls: type[Endpoint]) -> type[Endpoint]:
 
 
 def get(name: str) -> type[Endpoint] | None:
+    """Return the endpoint registered under `name`, or None."""
     return _REGISTRY.get(name)
 
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
+    """Return every registered endpoint, by name."""
     return dict(_REGISTRY)
 
 

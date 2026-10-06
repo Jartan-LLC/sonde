@@ -118,7 +118,9 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 Minimal example:
 
 ```python
-from sonde import Endpoint, RequestSpec, PageResult, register
+from typing import Any, override
+
+from sonde import Endpoint, PageResult, RequestSpec, register
 
 
 @register
@@ -126,10 +128,12 @@ class MyEndpoint(Endpoint):
     name = "my-endpoint"
     help = "one-line description for --help"
 
-    def build_request(self, cursor):
+    @override
+    def build_request(self, cursor: Any) -> RequestSpec:
         return RequestSpec(url="https://api.example.com/items", params={"page": cursor or 1})
 
-    def parse_page(self, response):
+    @override
+    def parse_page(self, response: Any) -> PageResult:
         data = response.json()
         return PageResult(count=len(data["items"]), next_cursor=data.get("next_page"))
 ```

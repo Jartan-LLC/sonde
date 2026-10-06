@@ -7,7 +7,8 @@ import logging
 import logging.config
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any
+from types import TracebackType
+from typing import Any, override
 
 # Secret substrings to scrub from log output if a target echoes them back.
 _SECRETS: list[str] = []
@@ -55,13 +56,14 @@ class PlainFormatter(logging.Formatter):
     )
 
     def __init__(self) -> None:
-        # Plain format is intentionally message-only (no timestamp/level prefix):
-        # it replaces the tool's former print() calls for interactive terminal use,
-        # where those prefixes are noise. The json format carries timestamp/level/
-        # logger for aggregators. Deliberate deviation from the logging convention's
-        # "timestamps in both formats".
+        """Format the message alone.
+
+        Plain output is read in a terminal, where a timestamp and level are noise; the
+        JSON format carries them for aggregators.
+        """
         super().__init__(fmt="%(message)s")
 
+    @override
     def formatMessage(self, record: logging.LogRecord) -> str:
         msg = super().formatMessage(record)
         # Preserve leading \n (phase banners) but escape embedded control chars.
@@ -69,11 +71,17 @@ class PlainFormatter(logging.Formatter):
         leading = len(msg) - len(stripped)
         return "\n" * leading + _scrub(stripped).translate(self._ESCAPES)
 
-    def formatException(self, ei) -> str:
+    @override
+    def formatException(
+        self,
+        ei: tuple[type[BaseException], BaseException, TracebackType | None]
+        | tuple[None, None, None],
+    ) -> str:
         # Base format() appends this (unescaped) after the message; neutralise
         # control chars while preserving the traceback's structural newlines.
         return _scrub(super().formatException(ei)).translate(self._EXC_ESCAPES)
 
+    @override
     def formatStack(self, stack_info: str) -> str:
         return _scrub(super().formatStack(stack_info)).translate(self._EXC_ESCAPES)
 
@@ -81,6 +89,7 @@ class PlainFormatter(logging.Formatter):
 class JsonFormatter(logging.Formatter):
     """Single-line JSON log output for machine consumption."""
 
+    @override
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
@@ -96,12 +105,16 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(*, level: int = logging.INFO, fmt: str = "plain") -> None:
-    """Configure stdlib logging. Call once at startup.
+    r"""Configure stdlib logging. Call once at startup.
 
     Formatter contract: log messages may carry leading newlines — phase banners
-    are emitted as ``logger.info("\\n== PHASE ...")`` for interactive spacing. Any
+    are emitted as ``logger.info("\n== PHASE ...")`` for interactive spacing. Any
     new formatter registered here must decide how to handle them: PlainFormatter
     preserves them, JsonFormatter strips them to keep each record single-line.
+
+    Args:
+        level: The root logger's level.
+        fmt: `plain` or `json`.
     """
     _SECRETS.clear()  # reset per run
     logging.config.dictConfig(

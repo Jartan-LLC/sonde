@@ -1,5 +1,4 @@
-"""
-endpoints/asset_owners.py — the asset-owners endpoint.
+"""endpoints/asset_owners.py — the asset-owners endpoint.
 
     GET https://inventory.roblox.com/v2/assets/{assetId}/owners
         ?limit={10|25|50|100}&cursor={cursor}&sortOrder={Asc|Desc}
@@ -11,9 +10,9 @@ Legacy cookie-auth endpoint. Returns a paginated list of owners of a collectible
 from __future__ import annotations
 
 import argparse
-from typing import Any, Self
+from typing import Any, Self, override
 
-from ..endpoint import (
+from sonde.endpoint import (
     Endpoint,
     PageResult,
     RequestSpec,
@@ -21,11 +20,13 @@ from ..endpoint import (
     pagination_from_args,
     register,
 )
-from ..provider import Provider, RobloxProvider
+from sonde.provider import Provider, RobloxProvider
 
 
 @register
 class AssetOwnersEndpoint(Endpoint):
+    """The owners of one collectible asset, paged by cursor."""
+
     name = "asset-owners"
     help = "inventory.roblox.com/v2/assets/{id}/owners — owners of a collectible asset"
 
@@ -39,45 +40,59 @@ class AssetOwnersEndpoint(Endpoint):
         page_size: int = 100,
         sort_order: str = "Asc",
     ) -> None:
+        """Set up the probe for one asset.
+
+        Args:
+            asset_id: The collectible asset whose owners are listed.
+            total_items: The known owner count, for the wall-clock estimate.
+            page_size: Owners per page, capped at `MAX_PAGE`.
+            sort_order: `Asc` or `Desc`.
+        """
         self.asset_id = asset_id
         self._total = total_items
         self.page_size = min(page_size, self.MAX_PAGE)
         self.sort_order = sort_order
 
+    @override
     def _make_provider(self) -> Provider:
         return RobloxProvider()
 
+    @override
     @classmethod
-    def add_arguments(cls, p: argparse.ArgumentParser) -> None:
-        p.add_argument(
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
             "--asset-id",
             type=int,
             required=True,
             help="asset id to probe (e.g. 20573078 for Shaggy)",
         )
-        p.add_argument("--sort-order", choices=["Asc", "Desc"], default="Asc")
-        add_pagination_args(p, page_max=cls.MAX_PAGE)
+        parser.add_argument("--sort-order", choices=["Asc", "Desc"], default="Asc")
+        add_pagination_args(parser, page_max=cls.MAX_PAGE)
 
+    @override
     @classmethod
-    def from_args(cls, a: argparse.Namespace) -> Self:
-        page_size, total_items = pagination_from_args(a, page_max=cls.MAX_PAGE)
+    def from_args(cls, args: argparse.Namespace) -> Self:
+        page_size, total_items = pagination_from_args(args, page_max=cls.MAX_PAGE)
         return cls(
-            asset_id=a.asset_id,
+            asset_id=args.asset_id,
             total_items=total_items,
             page_size=page_size,
-            sort_order=a.sort_order,
+            sort_order=args.sort_order,
         )
 
+    @override
     def build_request(self, cursor: Any) -> RequestSpec:
-        params = {"limit": self.page_size, "sortOrder": self.sort_order}
+        params: dict[str, Any] = {"limit": self.page_size, "sortOrder": self.sort_order}
         if cursor:
             params["cursor"] = cursor
         return RequestSpec(url=self.BASE.format(asset_id=self.asset_id), params=params)
 
+    @override
     def parse_page(self, response: Any) -> PageResult:
         body = response.json()
         data = body.get("data", [])
         return PageResult(count=len(data), next_cursor=body.get("nextPageCursor"))
 
+    @override
     def total_items(self) -> int | None:
         return self._total

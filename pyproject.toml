@@ -35,6 +35,12 @@ dependencies = [
 # ruff and codespell are versioned by their hook revs in .pre-commit-config.yaml.
 dev = [
     "pytest>=7.0,<10",
+    "pyright==1.1.414",  # every release is 1.1.x
+]
+docs = [
+    "sphinx>=9.1.0,<10",
+    "myst-parser>=5.1.0,<6",
+    "furo>=2025.12.19",  # CalVer, so no major to cap
 ]
 
 [project.scripts]
@@ -57,17 +63,70 @@ packages = ["src/sonde"]
 [tool.hatch.build.targets.sdist]
 include = ["src", "tests", "CHANGELOG.md", "CONTRIBUTING.md"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q"
-pythonpath = ["."]
-
 [tool.ruff]
 target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort (import sorting)
+    "N",        # pep8-naming
+    "D",        # pydocstyle (docstring discipline; convention set below)
+    "UP",       # pyupgrade (modern syntax)
+    "B",        # flake8-bugbear (likely bugs)
+    "A",        # flake8-builtins (shadowing builtins)
+    "C4",       # flake8-comprehensions
+    "DTZ",      # flake8-datetimez (tz-aware datetimes)
+    "T20",      # flake8-print (no stray print)
+    "PT",       # flake8-pytest-style
+    "RET",      # flake8-return
+    "SIM",      # flake8-simplify
+    "TID",      # flake8-tidy-imports
+    "PTH",      # flake8-use-pathlib
+    "PERF",     # perflint
+    "FURB",     # refurb (more modernization)
+    "PIE",      # flake8-pie
+    "ARG",      # unused arguments
+    "LOG", "G", # logging correctness
+    "ASYNC",    # async gotchas
+    "S",        # flake8-bandit (security)
+    "PL",       # pylint (C/E/R/W)
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "E501", # line length is enforced by the formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]                      # allow re-exports
+"tests/**" = ["S101", "ARG", "PLR2004", "D"]  # asserts, fixtures, magic values, docstrings
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+# `src` is a testpath so `--doctest-modules` runs the docstring examples the docs
+# publish: an example that stops matching its code fails the suite.
+testpaths = ["tests", "src"]
+addopts = "--strict-markers --strict-config --doctest-modules"
+xfail_strict = true
+pythonpath = ["."]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+# Tests may call a module's private helpers directly.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportPrivateUsage = false
 
 [tool.codespell]
 # Skip generated, legal and vendored text.

@@ -10,11 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Python 3.14 support.
+- A docs site with an API reference generated from the docstrings (`make docs`).
 
 ### Changed
 
 - The source distribution ships the whole test suite, including `tests/conftest.py` and
   `tests/helpers.py`.
+- The `sonde.phases` functions take a `Probe` (endpoint, budget, session, headers) and a
+  `BurstConfig`, `SweepConfig` or `Measurements` instead of long argument lists.
+- `RClass` is a `StrEnum`, so `str(RClass.OK)` is `"ok"`.
+- `register` returns the decorated class's own type, so type checkers see a registered
+  endpoint's constructor.
+- `core.parse_response` is public.
 
 ## [0.1.0] - 2026-07-02
 

@@ -2,26 +2,33 @@
 and the estimate's rate-source priority. Uses the virtual `clock` so pacing/sleeps
 resolve instantly and deterministically."""
 
+from typing import Any
+
 import pytest
 
 from sonde import core, phases
-from tests.helpers import FakeEndpoint, make_bucket
+from sonde.provider import Provider
+from tests.helpers import FakeClock, FakeEndpoint, make_bucket, make_probe
 
 
 # --------------------------------------------------------------------------- #
 # Sequential
 # --------------------------------------------------------------------------- #
-def test_sequential_trips_429(clock, monkeypatch, fake_endpoint):
+def test_sequential_trips_429(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     # bucket of 10, slow refill -> the 11th back-to-back request throttles
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=60.0, capacity=10))
-    summary, pool = phases.phase_seq(None, fake_endpoint, core.Budget(1000), cap=50)
+    summary, _ = phases.phase_seq(make_probe(fake_endpoint, core.Budget(1000)), cap=50)
     assert summary["successful_before_429"] == 10
     assert summary["first_429_at_request"] == 11
 
 
-def test_sequential_no_429_when_limit_high(clock, monkeypatch, fake_endpoint):
+def test_sequential_no_429_when_limit_high(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
-    summary, pool = phases.phase_seq(None, fake_endpoint, core.Budget(1000), cap=30)
+    summary, _ = phases.phase_seq(make_probe(fake_endpoint, core.Budget(1000)), cap=30)
     assert summary["first_429_at_request"] is None
     assert summary["successful_before_429"] == 30
 
@@ -29,42 +36,48 @@ def test_sequential_no_429_when_limit_high(clock, monkeypatch, fake_endpoint):
 # --------------------------------------------------------------------------- #
 # Sweep
 # --------------------------------------------------------------------------- #
-def test_sweep_finds_floor(clock, monkeypatch, fake_endpoint):
+def test_sweep_finds_floor(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     # 1 token per 0.05s, capacity 30. drain (cap 500) empties it; floor should be 0.05.
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.05, capacity=30))
     floor, rows = phases.phase_sweep(
-        None,
-        fake_endpoint,
-        core.Budget(5000),
+        make_probe(fake_endpoint, core.Budget(5000)),
         cursor_pool=["a", "b", "c"],
-        intervals=[0.2, 0.1, 0.05, 0.03],
-        probe_count=12,
-        drain_cap=500,
-        tolerance=0.1,
+        config=phases.SweepConfig(
+            intervals=(0.2, 0.1, 0.05, 0.03),
+            probe_count=12,
+            drain_cap=500,
+            tolerance=0.1,
+        ),
     )
     assert floor == 0.05  # 0.03 throttles from empty, 0.05 is the fastest clean one
     assert rows[-1]["clean"] is False
     assert all(r["bucket_emptied"] for r in rows)
 
 
-def test_sweep_aborts_when_undrainable(clock, monkeypatch, fake_endpoint):
+def test_sweep_aborts_when_undrainable(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     # capacity 200 but drain cap only 50 -> can't empty -> must abort with NO floor.
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=60.0 / 200, capacity=200))
     floor, rows = phases.phase_sweep(
-        None,
-        fake_endpoint,
-        core.Budget(5000),
+        make_probe(fake_endpoint, core.Budget(5000)),
         cursor_pool=["a", "b"],
-        intervals=[2, 1, 0.5],
-        probe_count=10,
-        drain_cap=50,
-        tolerance=0.1,
+        config=phases.SweepConfig(
+            intervals=(2, 1, 0.5),
+            probe_count=10,
+            drain_cap=50,
+            tolerance=0.1,
+        ),
     )
     assert floor is None
     assert rows == []  # aborts on the first (undrainable) interval
 
 
-def test_sweep_aborts_when_drain_unconfirmed(clock, monkeypatch, fake_endpoint):
+def test_sweep_aborts_when_drain_unconfirmed(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     # capacity 10, drain cap 12 -> the bucket does empty, but drain ends on only 2
     # consecutive throttles, never the 3-in-a-row that CONFIRMS empty. A lone/paired
     # 429 could be transient, so drain conservatively reports "not emptied" and the
@@ -74,31 +87,33 @@ def test_sweep_aborts_when_drain_unconfirmed(clock, monkeypatch, fake_endpoint):
     # reaches the fallthrough at consecutive==0, so only this one exercises the 1-2 case.
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=60.0, capacity=10))
     floor, rows = phases.phase_sweep(
-        None,
-        fake_endpoint,
-        core.Budget(5000),
+        make_probe(fake_endpoint, core.Budget(5000)),
         cursor_pool=["a"],
-        intervals=[0.1],
-        probe_count=5,
-        drain_cap=12,
-        tolerance=0.1,
+        config=phases.SweepConfig(
+            intervals=(0.1,),
+            probe_count=5,
+            drain_cap=12,
+            tolerance=0.1,
+        ),
     )
     assert floor is None
     assert rows == []
 
 
-def test_sweep_respects_budget(clock, monkeypatch, fake_endpoint):
+def test_sweep_respects_budget(
+    clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
+):
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.05, capacity=30))
     b = core.Budget(60)  # too small for even one drain+probe at cap 500
-    floor, rows = phases.phase_sweep(
-        None,
-        fake_endpoint,
-        b,
+    phases.phase_sweep(
+        make_probe(fake_endpoint, b),
         cursor_pool=["a"],
-        intervals=[0.2, 0.1],
-        probe_count=12,
-        drain_cap=500,
-        tolerance=0.1,
+        config=phases.SweepConfig(
+            intervals=(0.2, 0.1),
+            probe_count=12,
+            drain_cap=500,
+            tolerance=0.1,
+        ),
     )
     assert b.used <= 60  # never exceeds the budget
 
@@ -122,8 +137,6 @@ def test_summarise_burst_counts():
 # Estimate — rate-source priority
 # --------------------------------------------------------------------------- #
 def test_estimate_prefers_headers():
-    from sonde.provider import Provider
-
     rl = Provider().parse_rate_limit(
         {
             "x-ratelimit-limit": "420, 420;w=60",
@@ -133,13 +146,12 @@ def test_estimate_prefers_headers():
     )
     est = phases.phase_estimate(
         FakeEndpoint(total=1_470_000, page_size=100),
-        page_count=100,
-        seq_summary={},
-        burst_results=[],
-        measured_window=None,
-        swept_interval=0.6,  # present, but headers should win
+        phases.Measurements(
+            page_count=100,
+            rate_limit=rl,
+            swept_interval=0.6,
+        ),
         margin=0.8,
-        rl=rl,
     )
     assert est["header_limit"] == 420
     assert est["safe_rate_basis"].startswith("AUTHORITATIVE")
@@ -152,13 +164,12 @@ def test_estimate_prefers_headers():
 def test_estimate_falls_back_to_sweep():
     est = phases.phase_estimate(
         FakeEndpoint(total=500_000, page_size=100),
-        page_count=100,
-        seq_summary={},
-        burst_results=[],
-        measured_window=None,
-        swept_interval=0.05,
+        phases.Measurements(
+            page_count=100,
+            rate_limit={},
+            swept_interval=0.05,
+        ),
         margin=0.8,
-        rl={},
     )
     assert est["header_limit"] is None
     assert "measured floor" in est["safe_rate_basis"]
@@ -168,13 +179,12 @@ def test_estimate_falls_back_to_sweep():
 def test_estimate_rate_only_without_total():
     est = phases.phase_estimate(
         FakeEndpoint(total=None, page_size=100),
-        page_count=100,
-        seq_summary={},
-        burst_results=[],
-        measured_window=None,
-        swept_interval=0.05,
+        phases.Measurements(
+            page_count=100,
+            rate_limit={},
+            swept_interval=0.05,
+        ),
         margin=0.8,
-        rl={},
     )
     assert est["total_pages"] is None
     assert est["estimated_minutes"] is None
@@ -188,13 +198,12 @@ def test_estimate_zero_total_reports_zero_pages():
     # this unit test pins the total==0 contract directly.)
     est = phases.phase_estimate(
         FakeEndpoint(total=0, page_size=100),
-        page_count=100,
-        seq_summary={},
-        burst_results=[],
-        measured_window=None,
-        swept_interval=0.05,
+        phases.Measurements(
+            page_count=100,
+            rate_limit={},
+            swept_interval=0.05,
+        ),
         margin=0.8,
-        rl={},
     )
     assert est["total_pages"] == 0
     assert est["estimated_minutes"] == 0.0
@@ -208,16 +217,16 @@ def test_estimate_infers_from_token_bucket():
     measured window -> Priority-2 inference: (bucket / window) * 60 * margin."""
     est = phases.phase_estimate(
         FakeEndpoint(total=None, page_size=100),
-        page_count=100,
-        seq_summary={},
-        burst_results=[
-            {"burst_size": 10, "throttled_429": 0},
-            {"burst_size": 20, "throttled_429": 3},  # throttled -> excluded from bucket
-        ],
-        measured_window=12.0,
-        swept_interval=None,
+        phases.Measurements(
+            page_count=100,
+            rate_limit={},
+            burst_results=[
+                {"burst_size": 10, "throttled_429": 0},
+                {"burst_size": 20, "throttled_429": 3},  # throttled -> excluded from bucket
+            ],
+            measured_window=12.0,
+        ),
         margin=0.8,
-        rl={},
     )
     assert est["safe_rate_basis"].startswith("INFERRED")
     assert est["measured_window_seconds"] == 12.0
@@ -228,16 +237,18 @@ def test_estimate_no_throttle_fallback_scales_with_margin():
     """Rung 5: nothing throttled -> no ceiling, so 0.5 * margin of measured
     sequential throughput. --margin scales it (the most conservative rung)."""
 
-    def est(margin):
+    def est(margin: float) -> dict[str, Any]:
         return phases.phase_estimate(
             FakeEndpoint(total=None, page_size=100),
-            page_count=100,
-            seq_summary={"seq_req_per_sec": 10.0},  # no first_429 -> rung 5, not rung 4
-            burst_results=[],
-            measured_window=None,
-            swept_interval=None,
+            phases.Measurements(
+                page_count=100,
+                rate_limit={},
+                seq_summary={"seq_req_per_sec": 10.0},
+                burst_results=[],
+                measured_window=None,
+                swept_interval=None,
+            ),
             margin=margin,
-            rl={},
         )
 
     e = est(0.8)

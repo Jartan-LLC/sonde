@@ -1,5 +1,4 @@
-"""
-cli.py — argument parsing, endpoint selection, and run orchestration.
+"""cli.py — argument parsing, endpoint selection, and run orchestration.
 
 Usage:
     python -m sonde <endpoint> [common options] [endpoint options]
@@ -15,53 +14,54 @@ import json
 import logging
 import sys
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
-from . import (
-    core,
-    endpoint,
-    endpoints,  # noqa: F401  (import registers all endpoints)
-    phases,
-)
-from .logconfig import register_log_secrets, setup_logging
+from sonde import core, endpoint, phases
+from sonde.logconfig import register_log_secrets, setup_logging
 
 logger = logging.getLogger(__name__)
 
 # Header names whose values are credentials and must be kept out of logs.
 _SECRET_HEADER_KEYS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key"})
+# A shorter bare value could be a fragment of ordinary text, and redacting it would
+# mangle unrelated log lines.
+_MIN_SECRET_LEN = 8
 
 
 def _secret_variants(value: str) -> Iterable[str]:
-    """The full header value plus the bare credential inside it, so a target that
-    echoes just the token (no `Bearer `, no `.ROBLOSECURITY=`) is still redacted."""
+    """Yield a header value and the bare credential inside it.
+
+    A target that echoes only the token, without `Bearer ` or `.ROBLOSECURITY=`, is
+    still redacted.
+
+    >>> list(_secret_variants("Bearer abcd1234efgh"))
+    ['Bearer abcd1234efgh', 'abcd1234efgh']
+    """
     yield value
-    # Only emit a bare variant if it's long enough to be a real credential, so a
-    # short prefix can't over-redact unrelated log text.
-    after_scheme = value.split(" ", 1)  # "Bearer <tok>" -> "<tok>"
-    if len(after_scheme) == 2 and len(after_scheme[1]) >= 8:
-        yield after_scheme[1]
-    after_eq = value.split("=", 1)  # ".ROBLOSECURITY=<cookie>" -> "<cookie>"
-    if len(after_eq) == 2 and len(after_eq[1]) >= 8:
-        yield after_eq[1]
+    for sep in (" ", "="):  # "Bearer <tok>", ".ROBLOSECURITY=<cookie>"
+        _, found, bare = value.partition(sep)
+        if found and len(bare) >= _MIN_SECRET_LEN:
+            yield bare
 
 
 def _int_list(raw: str) -> list[int]:
-    """argparse type for a comma-separated list of ints (clean exit-2 on bad input)."""
+    """Argparse type for a comma-separated list of ints (clean exit-2 on bad input)."""
     try:
         vals = [int(x) for x in raw.split(",") if x.strip()]
     except ValueError as e:
-        raise argparse.ArgumentTypeError(f"comma-separated integers required: {e}")
+        raise argparse.ArgumentTypeError(f"comma-separated integers required: {e}") from e
     if not vals:
         raise argparse.ArgumentTypeError("at least one value required")
     return vals
 
 
 def _float_list(raw: str) -> list[float]:
-    """argparse type for a comma-separated list of floats (clean exit-2 on bad input)."""
+    """Argparse type for a comma-separated list of floats (clean exit-2 on bad input)."""
     try:
         vals = [float(x) for x in raw.split(",") if x.strip()]
     except ValueError as e:
-        raise argparse.ArgumentTypeError(f"comma-separated numbers required: {e}")
+        raise argparse.ArgumentTypeError(f"comma-separated numbers required: {e}") from e
     if not vals:
         raise argparse.ArgumentTypeError("at least one value required")
     return vals
@@ -174,6 +174,7 @@ def build_common_parser() -> argparse.ArgumentParser:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the parser: one subcommand per registered endpoint, each with the common options."""
     common = build_common_parser()
     p = argparse.ArgumentParser(
         prog="sonde",
@@ -187,14 +188,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Run every phase against the chosen endpoint and write the report.
+
+    Args:
+        args: The parsed command line.
+
+    Returns:
+        The report, as written to `--output`.
+    """
     ep_cls = endpoint.get(args.endpoint)
     if ep_cls is None:
         raise SystemExit(f"unknown endpoint: {args.endpoint}")
     _preflight_output(args.output)
     ep = ep_cls.from_args(args)
     provider = ep.provider()
-    burst_sizes = args.burst_sizes
-    sweep_intervals = sorted(args.sweep_intervals, reverse=True)
     budget = core.Budget(max_requests=args.max_requests)
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
@@ -205,7 +212,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if k.lower() in _SECRET_HEADER_KEYS
         for variant in _secret_variants(v)
     )
-    session = core.build_session(headers=headers)
+    probe = phases.Probe(
+        endpoint=ep, budget=budget, session=core.build_session(headers=headers), headers=headers
+    )
 
     logger.info("Endpoint : %s", ep.name)
     logger.info("Provider : %s", provider.name)
@@ -215,12 +224,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     logger.info("Budget   : %s requests total", args.max_requests)
 
-    report = {"endpoint": ep.name, "provider": provider.name}
+    report: dict[str, Any] = {"endpoint": ep.name, "provider": provider.name}
 
-    sanity, rl = phases.phase_sanity(session, ep, budget)
+    sanity, rl = phases.phase_sanity(probe)
     report["sanity"] = {
         "status": sanity.status,
-        "rclass": sanity.rclass.value,
+        "rclass": sanity.rclass,
         "items": sanity.count,
         "headers": sanity.headers,
     }
@@ -232,41 +241,36 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         _dump(args.output, report)
         return report
-    page_count = sanity.count  # items per successful page, for the estimate
+    measured = phases.Measurements(page_count=sanity.count, rate_limit=rl)
 
-    seq_summary, cursor_pool = phases.phase_seq(session, ep, budget, args.seq_cap)
-    report["sequential"] = seq_summary
+    measured.seq_summary, cursor_pool = phases.phase_seq(probe, args.seq_cap)
+    report["sequential"] = measured.seq_summary
 
-    burst_results, measured_window = [], None
     if not args.skip_burst:
-        burst_results, measured_window = phases.phase_burst(
-            headers,
-            ep,
-            budget,
-            burst_sizes,
-            args.burst_cooldown,
-            cursor_pool,
-            args.recovery_step,
-            args.recovery_max,
-            args.recovery_polls,
+        burst = phases.BurstConfig(
+            sizes=tuple(args.burst_sizes),
+            cooldown=args.burst_cooldown,
+            recovery_step=args.recovery_step,
+            recovery_max=args.recovery_max,
+            recovery_polls=args.recovery_polls,
         )
-    report["burst"] = burst_results
-    report["measured_window_seconds"] = measured_window
+        measured.burst_results, measured.measured_window = phases.phase_burst(
+            probe, cursor_pool, burst
+        )
+    report["burst"] = measured.burst_results
+    report["measured_window_seconds"] = measured.measured_window
 
-    swept_interval, sweep_rows = None, []
+    sweep_rows: list[dict[str, Any]] = []
     headers_authoritative = bool(rl.get("limit") and rl.get("window_s"))
     run_sweep = (not args.skip_sweep) and (args.force_sweep or not headers_authoritative)
     if run_sweep:
-        swept_interval, sweep_rows = phases.phase_sweep(
-            session,
-            ep,
-            budget,
-            cursor_pool,
-            sweep_intervals,
-            args.sweep_count,
-            args.sweep_drain,
-            args.sweep_tolerance,
+        sweep = phases.SweepConfig(
+            intervals=tuple(sorted(args.sweep_intervals, reverse=True)),
+            probe_count=args.sweep_count,
+            drain_cap=args.sweep_drain,
+            tolerance=args.sweep_tolerance,
         )
+        measured.swept_interval, sweep_rows = phases.phase_sweep(probe, cursor_pool, sweep)
     elif headers_authoritative and not args.skip_sweep:
         logger.info("\n== PHASE: sustained-interval sweep ==")
         logger.info(
@@ -274,11 +278,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "Use --force-sweep to run it anyway as an independent check."
         )
     report["sweep"] = sweep_rows
-    report["swept_floor_interval_s"] = swept_interval
+    report["swept_floor_interval_s"] = measured.swept_interval
 
-    report["estimate"] = phases.phase_estimate(
-        ep, page_count, seq_summary, burst_results, measured_window, swept_interval, args.margin, rl
-    )
+    report["estimate"] = phases.phase_estimate(ep, measured, args.margin)
     report["requests_used"] = budget.used
 
     _dump(args.output, report)
@@ -296,11 +298,11 @@ def _preflight_output(path: str) -> None:
         # Append mode: tests writability without truncating an existing report.
         # On a new path this creates a zero-byte file; if the probe is interrupted
         # before _dump, that empty file remains (acceptable for fail-fast).
-        with open(path, "a"):
+        with Path(path).open("a"):
             pass
     except OSError as e:
         logger.error("cannot write --output %r: %s", path, e)
-        raise SystemExit(2)
+        raise SystemExit(2) from e
 
 
 def _dump(path: str, report: dict[str, Any]) -> None:
@@ -308,20 +310,29 @@ def _dump(path: str, report: dict[str, Any]) -> None:
         json.dump(report, sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
-        with open(path, "w") as f:
+        with Path(path).open("w") as f:
             json.dump(report, f, indent=2)
 
 
 def _aborted(report: dict[str, Any]) -> bool:
-    """True when the probe bailed because the endpoint returned no usable response
-    (non-OK sanity). main() maps this to a non-zero exit so CI can detect it."""
+    """Return True when the probe stopped because the endpoint gave no usable response.
+
+    main() maps this to a non-zero exit, so CI can detect it.
+    """
     sanity = report.get("sanity")
     return bool(sanity) and sanity.get("rclass") != core.RClass.OK.value
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Exit codes: 0 success, 2 precondition failure (bad args / unwritable output /
-    endpoint returned no usable response), 1 unexpected crash, 130 interrupted."""
+    """Run sonde from the command line.
+
+    Exit codes: 0 success; 2 a failed precondition (bad arguments, an unwritable
+    output, or no usable response from the endpoint); 1 an unexpected crash; 130
+    interrupted.
+
+    Args:
+        argv: The arguments; `sys.argv[1:]` when omitted.
+    """
     args = build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
     setup_logging(level=level, fmt=args.log_format)
@@ -333,7 +344,7 @@ def main(argv: list[str] | None = None) -> None:
     except Exception:
         # Route crashes through the logger so --log-format json keeps stderr valid
         # JSON and the traceback is escaped (PlainFormatter) rather than dumped raw.
-        logger.error("unexpected error", exc_info=True)
+        logger.exception("unexpected error")
         sys.exit(1)
     if _aborted(report):
         sys.exit(2)

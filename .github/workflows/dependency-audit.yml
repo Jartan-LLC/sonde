@@ -45,7 +45,7 @@ jobs:
         with:
           version-file: ci/requirements.txt
 
-      - run: uv pip install -e '.[dev]' -r ci/requirements.txt
+      - run: uv pip install -e '.[dev,docs]' -r ci/requirements.txt
 
       # pip-audit exits 1 both for findings and for a fatal error, but writes the report
       # only when the audit completes, so a non-empty report separates the two.
