@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A burst size repeated later in `--burst-sizes` no longer skips the cooldown after it.
+- The sweep's floor message names no interval, rather than printing `Nones`, when the
+  first interval tried throttles.
 
 ## [0.1.0] - 2026-07-02
 

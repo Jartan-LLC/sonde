@@ -177,7 +177,7 @@ jobs:
         with:
           persist-credentials: false
       - run: docker build -t sonde:ci .
-      - run: docker run --rm sonde:ci --help
+      - run: docker run --rm sonde:ci asset-owners --help
 
   changes:
     runs-on: ubuntu-24.04

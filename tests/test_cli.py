@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,19 @@ def test_parser_lists_endpoint_subcommands():
     assert args.asset_id == 1
     assert args.sweep_drain == 500  # raised default
     assert args.max_requests == 1200
+
+
+def test_cli_registers_endpoints_in_a_fresh_interpreter():
+    # In-process tests can't catch a lost registration: other test modules import the
+    # endpoints first.
+    result = subprocess.run(
+        [sys.executable, "-m", "sonde", "asset-owners", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--asset-id" in result.stdout
 
 
 def test_parser_requires_endpoint():

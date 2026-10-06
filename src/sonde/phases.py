@@ -375,9 +375,7 @@ async def _run_bursts(
                 )
                 break
             outcome = await _one_burst(probe, client, list(itertools.islice(cursors, n)))
-            row = _summarise_burst(
-                n, outcome.results, elapsed=outcome.elapsed_s, spread_ms=outcome.spread_ms
-            )
+            row = _summarise_burst(outcome)
             # Recovery is async, so the window is measured here, on the first throttled
             # burst, not in the bookkeeping helper.
             if row["throttled_429"] > 0 and measured_window is None:
@@ -395,13 +393,10 @@ async def _run_bursts(
     return results, measured_window
 
 
-def _summarise_burst(
-    n: int,
-    batch: list[Result],
-    elapsed: float,
-    spread_ms: float,
-) -> dict[str, Any]:
+def _summarise_burst(outcome: _BurstOutcome) -> dict[str, Any]:
     """Count one burst's outcomes and build its report row."""
+    batch, elapsed, spread_ms = outcome.results, outcome.elapsed_s, outcome.spread_ms
+    n = len(batch)
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
     c429 = sum(1 for r in batch if r.rclass == core.RClass.THROTTLED)
     other = n - ok - c429

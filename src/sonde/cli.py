@@ -13,10 +13,11 @@ import argparse
 import json
 import logging
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+import sonde.endpoints  # noqa: F401  # pyright: ignore[reportUnusedImport] - registers the built-in endpoints
 from sonde import core, endpoint, phases
 from sonde.logconfig import register_log_secrets, setup_logging
 
@@ -45,26 +46,23 @@ def _secret_variants(value: str) -> Iterable[str]:
             yield bare
 
 
-def _int_list(raw: str) -> list[int]:
-    """Argparse type for a comma-separated list of ints (clean exit-2 on bad input)."""
-    try:
-        vals = [int(x) for x in raw.split(",") if x.strip()]
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(f"comma-separated integers required: {e}") from e
-    if not vals:
-        raise argparse.ArgumentTypeError("at least one value required")
-    return vals
+def _list_of[T](convert: Callable[[str], T], kind: str) -> Callable[[str], list[T]]:
+    """Build an argparse type for a comma-separated list (a clean exit 2 on bad input)."""
+
+    def parse(raw: str) -> list[T]:
+        try:
+            vals = [convert(x) for x in raw.split(",") if x.strip()]
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"comma-separated {kind} required: {e}") from e
+        if not vals:
+            raise argparse.ArgumentTypeError("at least one value required")
+        return vals
+
+    return parse
 
 
-def _float_list(raw: str) -> list[float]:
-    """Argparse type for a comma-separated list of floats (clean exit-2 on bad input)."""
-    try:
-        vals = [float(x) for x in raw.split(",") if x.strip()]
-    except ValueError as e:
-        raise argparse.ArgumentTypeError(f"comma-separated numbers required: {e}") from e
-    if not vals:
-        raise argparse.ArgumentTypeError("at least one value required")
-    return vals
+_int_list = _list_of(int, "integers")
+_float_list = _list_of(float, "numbers")
 
 
 def build_common_parser() -> argparse.ArgumentParser:

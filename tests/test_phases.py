@@ -128,7 +128,7 @@ def test_summarise_burst_counts():
     batch = [core.Result(200, 0.01) for _ in range(7)] + [
         core.Result(429, 0.01, retry_after=5.0) for _ in range(3)
     ]
-    row = phases._summarise_burst(10, batch, elapsed=0.2, spread_ms=4.0)
+    row = phases._summarise_burst(phases._BurstOutcome(batch, elapsed_s=0.2, spread_ms=4.0))
     assert row["ok_200"] == 7
     assert row["throttled_429"] == 3
     assert row["max_retry_after"] == 5.0
