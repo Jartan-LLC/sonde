@@ -213,11 +213,11 @@ def test_estimate_zero_total_reports_zero_pages():
 
 
 # --------------------------------------------------------------------------- #
-# Estimate — token-bucket inference (Priority 2)
+# Estimate — token-bucket inference
 # --------------------------------------------------------------------------- #
 def test_estimate_infers_from_token_bucket():
     """No authoritative headers and no swept floor, but a fully-OK burst plus a
-    measured window -> Priority-2 inference: (bucket / window) * 60 * margin."""
+    measured window -> token-bucket inference: (bucket / window) * 60 * margin."""
     est = phases.phase_estimate(
         FakeEndpoint(total=None, page_size=100),
         phases.Measurements(
@@ -237,8 +237,8 @@ def test_estimate_infers_from_token_bucket():
 
 
 def test_estimate_no_throttle_fallback_scales_with_margin():
-    """Rung 5: nothing throttled -> no ceiling, so 0.5 * margin of measured
-    sequential throughput. --margin scales it (the most conservative rung)."""
+    """No-throttle fallback: nothing throttled -> no ceiling, so 0.5 * margin of measured
+    sequential throughput. --margin scales it (the most conservative source)."""
 
     def est(margin: float) -> dict[str, Any]:
         return phases.phase_estimate(
@@ -246,7 +246,7 @@ def test_estimate_no_throttle_fallback_scales_with_margin():
             phases.Measurements(
                 page_count=100,
                 rate_limit={},
-                seq_summary={"seq_req_per_sec": 10.0},  # no first_429 -> rung 5, not rung 4
+                seq_summary={"seq_req_per_sec": 10.0},  # no first_429: the no-throttle fallback
                 burst_results=[],
                 measured_window=None,
                 swept_interval=None,
@@ -280,7 +280,7 @@ def test_recovery_steps_geometric_backoff():
 
 
 # --------------------------------------------------------------------------- #
-# Extracted helpers
+# Cursor, drain, pacing and async-fetch helpers
 # --------------------------------------------------------------------------- #
 def test_cursors_without_a_pool_yield_none():
     cursors = phases._cursors([])

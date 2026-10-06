@@ -30,7 +30,7 @@ _MIN_SECRET_LEN = 8
 
 
 def _secret_variants(value: str) -> Iterable[str]:
-    """Yield a header value and the bare credential inside it.
+    """Yield a credential and any bare token inside it.
 
     A target that echoes only the token, without `Bearer ` or `.ROBLOSECURITY=`, is
     still redacted.
@@ -190,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    """Run every phase against the chosen endpoint and write the report.
+    """Run the phases against the chosen endpoint and write the report.
 
     Args:
         args: The parsed command line.
@@ -207,7 +207,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     budget = core.Budget(max_requests=args.max_requests)
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
-    # Keep our own credentials out of logs if the target echoes them back.
+    # Keep our own credentials out of logs: a target can echo them back, and a connection
+    # error can quote the URL with its query parameters.
     secrets = [v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS]
     secrets += provider.auth_params().values()
     register_log_secrets(variant for v in secrets for variant in _secret_variants(v))

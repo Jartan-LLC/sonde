@@ -3,7 +3,8 @@
 import sys
 from pathlib import Path
 
-# Make the src-layout package importable for autodoc (works without an install too).
+# Import the package from this checkout's src/; autodoc still needs its runtime
+# dependencies installed.
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 project = "sonde"
@@ -19,7 +20,9 @@ extensions = [
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False
-napoleon_use_ivar = True  # Attributes sections as fields, not a second set of members
+# Attributes sections as a field list: as attribute entries they'd duplicate the
+# :undoc-members: fields and fail -W.
+napoleon_use_ivar = True
 
 myst_enable_extensions = ["colon_fence", "deflist", "tasklist"]
 myst_heading_anchors = 3  # `#section` links, as GitHub resolves them

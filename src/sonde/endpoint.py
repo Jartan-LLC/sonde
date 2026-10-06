@@ -6,8 +6,8 @@ answer three questions:
 
   1. build_request(cursor) -> RequestSpec   How do I form a request (URL, params,
                                              method) for a given paging position?
-  2. parse_page(body)      -> PageResult    Given a 200 body, how many items did I
-                                             get and what's the next paging cursor?
+  2. parse_page(response)  -> PageResult    Given a successful response, how many items
+                                             did I get and what's the next paging cursor?
   3. total_items()         -> int | None    (optional) how many items exist in total,
                                              so the tool can estimate scrape time.
 
@@ -68,7 +68,7 @@ class Endpoint(ABC):
         """Register endpoint-specific CLI arguments on `parser`."""
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace) -> Self:  # noqa: ARG003 - the default takes none
+    def from_args(cls, args: argparse.Namespace) -> Self:  # noqa: ARG003 - the default ignores them
         """Build an instance from parsed CLI args."""
         return cls()
 

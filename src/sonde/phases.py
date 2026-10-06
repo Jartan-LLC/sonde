@@ -37,19 +37,26 @@ from sonde.endpoint import Endpoint
 
 logger = logging.getLogger(__name__)
 
-# Consecutive throttles that show the drain has emptied the bucket: one or two could
-# be transient.
+# Consecutive throttles that show the drain has emptied the bucket; fewer could be
+# transient.
 _DRAINED_AFTER = 3
 
 
 @dataclass(frozen=True)
 class Probe:
-    """What every phase works against: the endpoint, the shared budget, and the client setup."""
+    """What the probing phases work against.
+
+    Attributes:
+        endpoint: The endpoint probed.
+        budget: The request budget every phase draws from.
+        session: The serial phases' HTTP session.
+        headers: The request headers, for the burst phase's own httpx client.
+    """
 
     endpoint: Endpoint
     budget: Budget
     session: requests.Session
-    headers: dict[str, str]  # for the burst phase's own httpx client
+    headers: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -90,10 +97,19 @@ class SweepConfig:
 
 @dataclass
 class Measurements:
-    """What the earlier phases found, which the estimate turns into a rate."""
+    """What the earlier phases found, which the estimate turns into a rate.
 
-    page_count: int  # items per successful page
-    rate_limit: dict[str, Any]  # the provider's parse of the rate-limit headers
+    Attributes:
+        page_count: Items per successful page.
+        rate_limit: The provider's parse of the rate-limit headers.
+        seq_summary: `phase_seq`'s summary.
+        burst_results: `phase_burst`'s rows.
+        measured_window: The throttle window `phase_burst` measured, in seconds.
+        swept_interval: The fastest clean interval `phase_sweep` found, in seconds.
+    """
+
+    page_count: int
+    rate_limit: dict[str, Any]
     seq_summary: dict[str, Any] = field(default_factory=dict[str, Any])
     burst_results: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     measured_window: float | None = None
@@ -101,7 +117,10 @@ class Measurements:
 
 
 def has_authoritative_limit(rate_limit: dict[str, Any]) -> bool:
-    """Whether the headers state both a limit and its window, which makes the sweep redundant."""
+    """Return whether the parsed rate-limit headers state both a limit and its window.
+
+    When they do, the sweep is redundant.
+    """
     return bool(rate_limit.get("limit") and rate_limit.get("window_s"))
 
 
@@ -114,10 +133,10 @@ def _cursors(cursor_pool: list[Any]) -> Iterator[Any]:
 # Sanity / auth + header read
 # --------------------------------------------------------------------------- #
 def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
-    """Send one request, report auth and the rate-limit headers.
+    """Send one request and log what it shows about auth and rate limits.
 
     Returns:
-        The response, and the provider's parse of its rate-limit headers.
+        The request's result, and the provider's parse of its rate-limit headers.
     """
     logger.info("\n== PHASE: sanity / auth ==")
     endpoint = probe.endpoint
@@ -433,10 +452,11 @@ def phase_sweep(
 ) -> tuple[float | None, list[dict[str, Any]]]:
     """Find the fastest inter-request interval that stays 429-free at STEADY STATE.
 
-    Drains the bucket first (rapid requests until empty), then paces `probe_count`
-    requests from empty. A too-fast interval throttles immediately from empty; a
-    sustainable one stays clean. If the bucket can't be emptied within `drain_cap`,
-    the measurement is invalid, so the sweep aborts with NO floor rather than lie.
+    Drains the bucket first (rapid requests until empty), then paces
+    `config.probe_count` requests from empty. A too-fast interval throttles immediately
+    from empty; a sustainable one stays clean. If the bucket can't be emptied within
+    `config.drain_cap`, the measurement is invalid, so the sweep aborts with NO floor
+    rather than lie.
 
     Returns:
         The fastest clean interval in seconds (None if none was found), and one row

@@ -55,7 +55,7 @@ fix:  ## Apply ruff's safe fixes and formatting via its pre-commit hooks (git-tr
 	pre-commit run ruff-check --all-files || pre-commit run ruff-check --all-files
 	pre-commit run ruff-format --all-files || pre-commit run ruff-format --all-files
 
-typecheck:  ## Static type check (pyright, strict)
+typecheck:  ## Run the static type check (pyright, strict)
 	pyright
 
 test:  ## Run the test suite, docstring examples included
@@ -64,7 +64,7 @@ test:  ## Run the test suite, docstring examples included
 docs:  ## Build the docs site, warnings-as-errors
 	sphinx-build -W -b html docs docs/_build/html
 
-check:  ## Run every CI check (lint, typecheck, test, build, audit, docs)
+check:  ## Run CI's lint, typecheck, test, build, audit and docs checks
 	$(MAKE) lint typecheck test
 	uv build
 	python -m twine check dist/*
