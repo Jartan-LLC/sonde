@@ -211,7 +211,10 @@ def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
 
 
 def request_args(endpoint: Endpoint, cursor: Any) -> tuple[RequestSpec, dict[str, Any]]:
-    """Return the request for `cursor`, and its query parameters with the provider's auth."""
+    """Return the request for `cursor` and its query parameters.
+
+    The parameters are the provider's auth parameters, overridden by the request's own.
+    """
     spec = endpoint.build_request(cursor)
     return spec, {**endpoint.provider().auth_params(), **(spec.params or {})}
 
