@@ -7,5 +7,5 @@ Probe any HTTP API for its rate limits, burst ceiling, and full-scrape time.
 
 getting-started
 reference
-scaffold
+template-updates
 ```
