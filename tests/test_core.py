@@ -11,6 +11,7 @@ from requests.adapters import HTTPAdapter
 
 from sonde import core, logconfig
 from sonde.core import RClass
+from sonde.endpoint import PageResult
 from sonde.logconfig import register_log_secrets
 from tests.helpers import FakeEndpoint, FakeResp
 
@@ -166,3 +167,20 @@ def test_fetch_scrubs_a_connection_error(registered_secret: str, monkeypatch: py
     res = core.fetch(session, FakeEndpoint(), cursor=None, budget=core.Budget(1))
     assert res.error is not None
     assert registered_secret not in res.error
+
+
+def test_parse_response_scrubs_a_parse_failure(
+    registered_secret: str, monkeypatch: pytest.MonkeyPatch
+):
+    def parse_page(self: FakeEndpoint, response: Any) -> PageResult:
+        raise ValueError(f"unexpected body: {registered_secret}")
+
+    monkeypatch.setattr(FakeEndpoint, "parse_page", parse_page)
+    res = core.parse_response(FakeResp(200, body={}), 0.1, FakeEndpoint())
+    assert res.error is not None
+    assert registered_secret not in res.error
+
+
+def test_interesting_headers_are_scrubbed(registered_secret: str):
+    resp = FakeResp(429, headers={"X-Request-Id": f"/probe?key={registered_secret}"})
+    assert registered_secret not in core.interesting_headers(resp)["X-Request-Id"]

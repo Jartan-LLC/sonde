@@ -146,9 +146,14 @@ class Result:
 
 
 def interesting_headers(resp: Any) -> dict[str, str]:
-    """Return the response headers worth reporting: rate limits, retry hints, server IDs."""
+    """Return the response headers worth reporting: rate limits, retry hints, server IDs.
+
+    Values are scrubbed of registered secrets, since a server can reflect the request in them.
+    """
     return {
-        k: v for k, v in resp.headers.items() if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
+        k: scrub(v)
+        for k, v in resp.headers.items()
+        if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
     }
 
 

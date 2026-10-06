@@ -9,7 +9,8 @@ from typing import Any
 import httpx
 import pytest
 
-from sonde import core, phases
+from sonde import core, logconfig, phases
+from sonde.logconfig import register_log_secrets
 from sonde.phases import burst, probe, sweep
 from sonde.provider import Provider
 from tests.helpers import FakeClock, FakeEndpoint, Handler, make_bucket, make_probe
@@ -303,3 +304,25 @@ def test_afetch_reports_a_network_error(
     assert (r.status, r.rclass) == (0, core.RClass.ERROR)
     assert r.error is not None
     assert "refused" in r.error
+
+
+def test_afetch_scrubs_a_network_error(
+    fake_endpoint: FakeEndpoint, burst_transport: Callable[[Handler], None]
+):
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused: key=SECRETTOKENVALUE", request=request)
+
+    burst_transport(refuse)
+
+    async def go() -> core.Result:
+        async with httpx.AsyncClient() as client:
+            return await burst._afetch(make_probe(fake_endpoint, core.Budget(1)), client, None)
+
+    logconfig._SECRETS.clear()
+    register_log_secrets(["SECRETTOKENVALUE"])
+    try:
+        r = asyncio.run(go())
+    finally:
+        logconfig._SECRETS.clear()
+    assert r.error is not None
+    assert "SECRETTOKENVALUE" not in r.error
