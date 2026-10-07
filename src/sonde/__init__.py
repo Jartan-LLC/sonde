@@ -3,6 +3,7 @@
 __version__ = "0.1.0"
 
 # Imported after __version__, which core.py reads while these imports run.
+from sonde.core import RClass
 from sonde.endpoint import (
     Endpoint,
     PageResult,
@@ -11,12 +12,14 @@ from sonde.endpoint import (
     pagination_from_args,
     register,
 )
-from sonde.provider import Provider
+from sonde.provider import Provider, RateLimit
 
 __all__ = [
     "Endpoint",
     "PageResult",
     "Provider",
+    "RClass",
+    "RateLimit",
     "RequestSpec",
     "__version__",
     "add_pagination_args",

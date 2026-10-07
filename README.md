@@ -103,6 +103,8 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 
 ## Adding an Endpoint
 
+Import what an endpoint or provider needs from `sonde`; its other modules are internal and can change in any release.
+
 1. Create a new module in `src/sonde/endpoints/`.
 2. Subclass `Endpoint` and implement `build_request(cursor)` and `parse_page(response)`.
 3. Decorate with `@register` and set a unique `name` (becomes the CLI subcommand).

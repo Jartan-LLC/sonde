@@ -1,6 +1,8 @@
 # API reference
 
-Generated from the source docstrings.
+Generated from the source docstrings. The names importable from `sonde` are the stable API
+for writing endpoints and providers; the rest is documented for reading the code and can
+change in any release.
 
 ```{eval-rst}
 .. automodule:: sonde.endpoint

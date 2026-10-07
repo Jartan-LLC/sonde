@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Python 3.14 support.
+- `RClass` and `RateLimit` are importable from `sonde`, for custom providers.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
 - `core.parse_response`, `core.request_args`, `logconfig.scrub` and
   `provider.authoritative_limit` as public functions.
