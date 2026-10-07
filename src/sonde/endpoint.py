@@ -1,7 +1,7 @@
 """The pluggable Endpoint interface.
 
-To test a new API endpoint you implement ONE subclass of `Endpoint` and register
-it. The generic probing engine (`sonde.phases`) drives everything else. A subclass
+To test a new API endpoint you implement ONE subclass of `Endpoint` and make it
+known to sonde. The generic probing engine (`sonde.phases`) drives everything else. A subclass
 answers three questions:
 
 - `build_request(cursor) -> RequestSpec`: how to form the request for a paging
@@ -12,15 +12,19 @@ answers three questions:
   can estimate the scrape time.
 
 Plus optional CLI plumbing (add_arguments / from_args) and extra_headers().
+An installed package adds an endpoint under the `sonde.endpoints` entry-point group.
 See endpoints/asset_owners.py for a worked example, and the README.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from importlib.metadata import entry_points
 from typing import Any, Self
 
 from sonde.provider import Provider
@@ -28,6 +32,7 @@ from sonde.provider import Provider
 __all__ = [
     "Endpoint",
     "PageResult",
+    "PluginError",
     "RequestSpec",
     "add_pagination_args",
     "all_endpoints",
@@ -75,7 +80,7 @@ class Endpoint(ABC):
         """Build an instance from parsed CLI args."""
         return cls()
 
-    def _make_provider(self) -> Provider:
+    def make_provider(self) -> Provider:
         """Return the Provider for this endpoint's API.
 
         The default is the generic provider: 200/429, IETF headers, no auth. Override it
@@ -86,7 +91,7 @@ class Endpoint(ABC):
     def provider(self) -> Provider:
         """Return this endpoint's provider, the same instance on every call."""
         if self._provider_instance is None:
-            self._provider_instance = self._make_provider()
+            self._provider_instance = self.make_provider()
         return self._provider_instance
 
     @abstractmethod
@@ -130,9 +135,55 @@ def register[E: type[Endpoint]](cls: E) -> E:
     return cls
 
 
+class PluginError(Exception):
+    """An endpoint couldn't be loaded, registered, or given its CLI arguments."""
+
+
+_PLUGIN_GROUP = "sonde.endpoints"
+
+
+@functools.cache
+def _load_plugins() -> None:
+    """Register the endpoint each installed package declares under `_PLUGIN_GROUP`.
+
+    On failure the registry is left as it was, so a retry reports the same error.
+
+    Raises:
+        PluginError: An entry point fails to load, isn't a concrete `Endpoint`
+            subclass, or its `name` is unset or taken.
+    """
+    before = dict(_REGISTRY)
+    try:
+        _register_plugins()
+    except PluginError:
+        _REGISTRY.clear()
+        _REGISTRY.update(before)
+        raise
+
+
+def _register_plugins() -> None:
+    for ep in entry_points(group=_PLUGIN_GROUP):
+        where = f"entry point {ep.name!r} ({ep.value})"
+        try:
+            cls = ep.load()
+        except Exception as e:  # a plugin can fail in any way while importing
+            raise PluginError(f"{where} failed to load: {e}") from e
+        if not (isinstance(cls, type) and issubclass(cls, Endpoint)):
+            raise PluginError(f"{where} is not an Endpoint subclass")
+        if inspect.isabstract(cls):
+            raise PluginError(f"{where} is abstract: it doesn't implement every Endpoint method")
+        if _REGISTRY.get(cls.name) is cls:  # already registered with @register
+            continue
+        try:
+            register(cls)
+        except ValueError as e:
+            raise PluginError(f"{where}: {e}") from e
+
+
 def _loaded_registry() -> dict[str, type[Endpoint]]:
-    """Return the registry, once the built-in endpoints have registered themselves."""
+    """Return the registry, with the built-in and installed endpoints registered."""
     importlib.import_module("sonde.endpoints")
+    _load_plugins()
     return _REGISTRY
 
 
@@ -142,7 +193,7 @@ def get(name: str) -> type[Endpoint] | None:
 
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
-    """Return every registered endpoint, built-in or imported, by name."""
+    """Return every registered endpoint, built-in or from an installed package, by name."""
     return dict(_loaded_registry())
 
 

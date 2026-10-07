@@ -54,7 +54,7 @@ class AssetOwnersEndpoint(Endpoint):
         self.sort_order = sort_order
 
     @override
-    def _make_provider(self) -> Provider:
+    def make_provider(self) -> Provider:
         return RobloxProvider()
 
     @override

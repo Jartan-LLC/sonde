@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Python 3.14 support.
+- Endpoints from installed packages: a package that declares an `Endpoint` subclass under
+  the `sonde.endpoints` entry-point group adds a `sonde` subcommand. A plugin that won't
+  load stops the CLI with exit code 2 and names its entry point.
+- `RClass`, `RateLimit`, `GitHubProvider` and `RobloxProvider` are importable from `sonde`.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
 - `core.parse_response`, `core.request_args`, `logconfig.scrub` and
   `provider.authoritative_limit` as public functions.
@@ -31,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonde.phases` is a package, split into modules by phase. Its public names import from
   `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
 - Providers read their credentials from the environment when they are constructed.
+- `Endpoint._make_provider()` is now `Endpoint.make_provider()`. Rename your override: one
+  still named `_make_provider` is never called, and the endpoint gets the generic provider.
 - `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
   rate-limit headers, rather than a dict. The phases return typed results too
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the

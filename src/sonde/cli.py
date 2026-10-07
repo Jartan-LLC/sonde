@@ -170,7 +170,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="endpoint", required=True, metavar="ENDPOINT")
     for name, cls in sorted(endpoint.all_endpoints().items()):
         sp = sub.add_parser(name, parents=[common], help=cls.help, description=cls.help)
-        cls.add_arguments(sp)
+        try:
+            cls.add_arguments(sp)
+        except Exception as e:  # a plugin's own code can fail in any way
+            where = f"{cls.__module__}.{cls.__qualname__}"
+            raise endpoint.PluginError(
+                f"endpoint {name!r} ({where}) failed to add its arguments: {e}"
+            ) from e
     return p
 
 
@@ -347,14 +353,19 @@ def _aborted(report: dict[str, Any]) -> bool:
 def main(argv: list[str] | None = None) -> None:
     """Run sonde from the command line.
 
-    Exit codes: 0 success; 2 a failed precondition (bad arguments, an unwritable
-    output, or no usable response from the endpoint); 1 an unexpected crash; 130
-    interrupted.
+    Exit codes: 0 success; 2 a failed precondition (bad arguments, an endpoint plugin
+    that won't load, an unwritable output, or no usable response from the endpoint); 1
+    an unexpected crash; 130 interrupted.
 
     Args:
         argv: The arguments; `sys.argv[1:]` when omitted.
     """
-    args = build_parser().parse_args(argv)
+    try:
+        parser = build_parser()
+    except endpoint.PluginError as e:
+        print(f"sonde: {e}", file=sys.stderr)  # noqa: T201 - logging isn't set up until args parse
+        sys.exit(2)
+    args = parser.parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
     setup_logging(level=level, fmt=args.log_format)
     try:

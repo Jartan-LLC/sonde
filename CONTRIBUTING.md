@@ -28,8 +28,9 @@ Everything but the advisory audit must pass before merge.
 
 ## Adding an endpoint
 
-See [Adding an Endpoint](README.md#adding-an-endpoint) in the README. In short: subclass
-`Endpoint`, decorate with `@register`, and import the module in `src/sonde/endpoints/__init__.py`.
+A built-in endpoint subclasses `Endpoint`, is decorated with `@register`, and is imported in
+`src/sonde/endpoints/__init__.py`; [Adding an Endpoint](README.md#adding-an-endpoint) in the
+README covers the rest.
 
 ## Conventions
 

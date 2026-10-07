@@ -1,14 +1,18 @@
 """Tests for the Endpoint interface, registry, and the asset-owners implementation."""
 
 import argparse
+import sys
+from collections.abc import Callable, Iterator
+from importlib.metadata import EntryPoint
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from sonde import endpoint
-from sonde.endpoint import Endpoint, PageResult, RequestSpec, register
+from sonde import cli, endpoint
+from sonde.endpoint import Endpoint, PageResult, PluginError, RequestSpec, register
 from sonde.endpoints.asset_owners import AssetOwnersEndpoint
-from tests.helpers import FakeResp
+from tests.helpers import FakeEndpoint, FakeResp
 
 
 def test_asset_owners_registered():
@@ -103,3 +107,109 @@ def test_pagination_from_args_clamps():
     assert endpoint.pagination_from_args(over, page_max=100) == (100, 999)  # clamped
     under = argparse.Namespace(page_size=50, total_items=None)
     assert endpoint.pagination_from_args(under, page_max=100) == (50, None)
+
+
+class ClashingEndpoint(FakeEndpoint):
+    """A plugin endpoint whose name a built-in already has."""
+
+    name = "asset-owners"
+
+
+class UnnamedEndpoint(FakeEndpoint):
+    name = ""
+
+
+class ArgumentClashEndpoint(FakeEndpoint):
+    name = "argument-clash"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--output")
+
+
+type Install = Callable[..., None]
+
+
+@pytest.fixture
+def install_plugins(monkeypatch: pytest.MonkeyPatch) -> Iterator[Install]:
+    """Fake the installed `sonde.endpoints` entry points, registering into a copy."""
+    monkeypatch.setattr(endpoint, "_REGISTRY", dict(endpoint._REGISTRY))
+    endpoint._load_plugins.cache_clear()
+
+    def install(*values: str) -> None:
+        eps = [EntryPoint(f"plugin{i}", v, "sonde.endpoints") for i, v in enumerate(values)]
+
+        def entry_points(group: str) -> list[EntryPoint]:
+            return eps
+
+        monkeypatch.setattr(endpoint, "entry_points", entry_points)
+
+    yield install
+    endpoint._load_plugins.cache_clear()
+
+
+def test_plugin_endpoint_is_registered(install_plugins: Install):
+    install_plugins("tests.helpers:FakeEndpoint")
+    assert endpoint.get("fake-test") is FakeEndpoint
+
+
+def test_plugin_already_registered_by_its_decorator_is_accepted(install_plugins: Install):
+    install_plugins("sonde.endpoints.asset_owners:AssetOwnersEndpoint")
+    assert endpoint.get("asset-owners") is AssetOwnersEndpoint
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        ("tests.no_such_module:Endpoint", "'plugin0' .* failed to load"),
+        ("tests.helpers:make_probe", "'plugin0' .* is not an Endpoint subclass"),
+        ("tests.helpers:FakeClock", "'plugin0' .* is not an Endpoint subclass"),
+        ("sonde.endpoint:Endpoint", "'plugin0' .* is abstract"),
+        ("tests.test_endpoint:ClashingEndpoint", "'plugin0' .*duplicate endpoint name"),
+        ("tests.test_endpoint:UnnamedEndpoint", "'plugin0' .*must set a unique `name`"),
+    ],
+)
+def test_broken_plugin_raises_naming_it(install_plugins: Install, value: str, error: str):
+    install_plugins(value)
+    with pytest.raises(PluginError, match=error):
+        endpoint.all_endpoints()
+
+
+def test_plugin_that_raises_while_importing_is_named(
+    install_plugins: Install, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    (tmp_path / "crashing_plugin.py").write_text('raise RuntimeError("plugin crashed")\n')
+    monkeypatch.setattr(sys, "path", [str(tmp_path), *sys.path])
+    install_plugins("crashing_plugin:Endpoint")
+    with pytest.raises(PluginError, match=r"'plugin0' .* failed to load: plugin crashed"):
+        endpoint.all_endpoints()
+
+
+def test_failed_plugin_load_leaves_the_registry_unchanged(install_plugins: Install):
+    before = dict(endpoint._REGISTRY)
+    install_plugins("tests.helpers:FakeEndpoint", "tests.helpers:make_probe")
+    for _ in range(2):  # a retry reports the same error, not a duplicate name
+        with pytest.raises(PluginError, match="is not an Endpoint subclass"):
+            endpoint.all_endpoints()
+        assert before == endpoint._REGISTRY
+
+
+def test_cli_exits_2_when_a_plugin_s_arguments_clash(
+    install_plugins: Install, capsys: pytest.CaptureFixture[str]
+):
+    install_plugins("tests.test_endpoint:ArgumentClashEndpoint")
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["--help"])
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "endpoint 'argument-clash' (tests.test_endpoint.ArgumentClashEndpoint)" in err
+
+
+def test_cli_exits_2_on_a_broken_plugin(
+    install_plugins: Install, capsys: pytest.CaptureFixture[str]
+):
+    install_plugins("tests.no_such_module:Endpoint")
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["--help"])
+    assert exit_info.value.code == 2
+    assert "sonde: entry point 'plugin0'" in capsys.readouterr().err
