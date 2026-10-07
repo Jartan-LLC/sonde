@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python 3.14 is tested and listed as supported.
 - Endpoints from installed packages: a package that declares an `Endpoint` subclass under
-  the `sonde.endpoints` entry-point group adds a `sonde` subcommand; the names `sonde`
-  exports are the API it builds on (see the README's "Adding an Endpoint"). While a plugin
-  fails to load, every `sonde` command exits 2 with an error naming it.
+  the `sonde.endpoints` entry-point group adds a `sonde` subcommand (see the README's
+  "Adding an Endpoint"). If an installed plugin fails to load, every `sonde` command exits
+  2 with an error naming it.
 
 ### Changed
 
@@ -45,9 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`sanity.headers` and `ratelimit_headers.raw`), not only in the logs.
 - An error message cut at its 200-character limit no longer keeps part of a credential.
 - An echoed credential is redacted even when the response's charset or a JSON encoder
-  altered it. Two cases still aren't redacted: a credential in a UTF-16 or UTF-32 body,
-  which 0.1.0 redacted when the response declared that charset, and one JSON-escaped
-  twice, as in JSON nested inside a JSON string.
+  altered it, unless it was JSON-escaped twice, as in JSON nested inside a JSON string.
+- A credential echoed in a UTF-16 or UTF-32 body is no longer redacted. 0.1.0 redacted it
+  when the response declared that charset.
 
 ## [0.1.0] - 2026-07-02
 
