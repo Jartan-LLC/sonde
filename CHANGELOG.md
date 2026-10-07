@@ -34,8 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
   rate-limit headers, rather than a dict. The phases return typed results too
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
-  report's JSON is unchanged. `Measurements` requires the sequential summary, and its
-  `rate_limit` is a `RateLimit` or None.
+  report's JSON is unchanged.
 
 ### Fixed
 
