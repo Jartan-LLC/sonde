@@ -101,8 +101,8 @@ class FakeResp:
         return self._body
 
     @property
-    def text(self) -> str:
-        return self._text
+    def content(self) -> bytes:
+        return self._text.encode()
 
 
 class FakeEndpoint(endpoint.Endpoint):

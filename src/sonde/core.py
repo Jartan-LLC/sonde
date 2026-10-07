@@ -200,7 +200,10 @@ def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
         except _PARSE_ERRORS as e:
             res.error = scrub(f"OK response but parse_page failed: {e}")
     elif rclass == RClass.ERROR and resp.status_code >= HTTPStatus.BAD_REQUEST:
-        res.error = scrub(resp.text)[:200]  # scrubbed first, so the cut can't split a secret
+        # The raw bytes as UTF-8, not `resp.text`: a guessed or declared legacy charset can
+        # alter an echoed credential (shift_jis_2004 reads "~" as "‾") so scrub misses it.
+        body = resp.content.decode("utf-8", errors="replace")
+        res.error = scrub(body)[:200]  # scrubbed first, so the cut can't split a secret
     return res
 
 

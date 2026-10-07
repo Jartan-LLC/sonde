@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential is ignored, rather than masked everywhere it appears in the logs.
 - Error text from a response or a failed connection is scrubbed of credentials before it
   is truncated or logged, and so are the response headers the report records.
+- An error body is read as UTF-8, whatever charset the response declares or the HTTP
+  client guesses, so a legacy charset can't alter an echoed credential and slip it past
+  the redaction.
 
 ## [0.1.0] - 2026-07-02
 

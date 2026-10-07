@@ -2,9 +2,10 @@
 parsing and auth moved to the Provider — see test_provider.py.)"""
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
+import httpx
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
@@ -184,3 +185,35 @@ def test_parse_response_scrubs_a_parse_failure(
 def test_interesting_headers_are_scrubbed(registered_secret: str):
     resp = FakeResp(429, headers={"X-Request-Id": f"/probe?key={registered_secret}"})
     assert registered_secret not in core.interesting_headers(resp)["X-Request-Id"]
+
+
+@pytest.fixture
+def tilde_secret() -> Iterator[str]:
+    logconfig._SECRETS.clear()
+    register_log_secrets(["SECRET~TOKENVALUE"])
+    yield "SECRET~TOKENVALUE"
+    logconfig._SECRETS.clear()
+
+
+def _requests_body(status: int, body: bytes, encoding: str) -> requests.Response:
+    resp = requests.Response()
+    resp.status_code = status
+    resp._content = body
+    resp.encoding = encoding  # what requests guesses when the body declares no charset
+    return resp
+
+
+def _httpx_body(status: int, body: bytes, encoding: str) -> httpx.Response:
+    return httpx.Response(
+        status, content=body, headers={"Content-Type": f"text/plain; charset={encoding}"}
+    )
+
+
+@pytest.mark.parametrize("make", [_requests_body, _httpx_body], ids=["requests", "httpx"])
+def test_parse_response_scrubs_whatever_the_body_charset(
+    tilde_secret: str, make: Callable[[int, bytes, str], Any]
+):
+    # shift_jis_2004 decodes "~" as "‾", so decoding with it hides the secret from scrub.
+    resp = make(401, f"bad token {tilde_secret}".encode(), "shift_jis_2004")
+    res = core.parse_response(resp, 0.1, FakeEndpoint())
+    assert res.error == "bad token ***"
