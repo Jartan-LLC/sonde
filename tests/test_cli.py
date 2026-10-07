@@ -13,13 +13,11 @@ import pytest
 from sonde import cli, core, endpoint
 from sonde.cli import build_parser
 from sonde.endpoint import Endpoint
+from sonde.endpoints.asset_owners import AssetOwnersEndpoint
 from sonde.provider import RobloxProvider
 from tests.helpers import RLH_420, FakeClock, Handler, make_bucket, make_burst_handler
 
 
-# --------------------------------------------------------------------------- #
-# Parser
-# --------------------------------------------------------------------------- #
 def test_parser_lists_endpoint_subcommands():
     p = build_parser()
     args = p.parse_args(["asset-owners", "--asset-id", "1"])
@@ -89,9 +87,6 @@ def test_parser_help_renders(capsys: pytest.CaptureFixture[str]):
     assert "--output" in out
 
 
-# --------------------------------------------------------------------------- #
-# run() — header path
-# --------------------------------------------------------------------------- #
 def _args(tmp_path: Path, *extra: str) -> tuple[argparse.Namespace, Path]:
     out = tmp_path / "report.json"
     base = [
@@ -158,9 +153,6 @@ def test_run_aborts_on_non_200(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert "estimate" not in report  # bailed before estimating
 
 
-# --------------------------------------------------------------------------- #
-# Output mode flags
-# --------------------------------------------------------------------------- #
 def test_verbose_quiet_mutually_exclusive():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["asset-owners", "--asset-id", "1", "-v", "-q"])
@@ -216,20 +208,6 @@ def test_bad_sweep_intervals_exits_2():
     assert exc.value.code == 2
 
 
-def test_secret_variants_yields_bare_credential():
-    assert list(cli._secret_variants("Bearer ghp_longtoken")) == [
-        "Bearer ghp_longtoken",
-        "ghp_longtoken",
-    ]
-    assert list(cli._secret_variants(".ROBLOSECURITY=cookieval")) == [
-        ".ROBLOSECURITY=cookieval",
-        "cookieval",
-    ]
-    assert list(cli._secret_variants("plainvalue")) == ["plainvalue"]
-    # bare tail shorter than 8 chars is not emitted (avoids over-redacting log text)
-    assert list(cli._secret_variants("Bearer abc")) == ["Bearer abc"]
-
-
 def test_configured_secret_absent_from_logs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -237,7 +215,7 @@ def test_configured_secret_absent_from_logs(
     restore_root_logger: None,
 ):
     """End-to-end: a credential the target echoes back is scrubbed from stderr
-    through cli.main() — exercises run()'s header filter -> register -> _scrub."""
+    through cli.main() — exercises the provider's credentials() -> register -> scrub."""
     monkeypatch.setenv("ROBLOX_COOKIE", "SUPERSECRETCOOKIEVALUE")
 
     def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
@@ -255,30 +233,57 @@ def test_configured_secret_absent_from_logs(
     assert "***" in captured.err  # redaction actually fired, line not merely absent
 
 
+def _stderr_when_target_echoes(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], argv: list[str], echoed: str
+) -> str:
+    def echo(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
+        budget.take()
+        return core.Result(status=403, elapsed=0.01, error=f"denied: {echoed}")
+
+    monkeypatch.setattr(core, "fetch", echo)
+    with pytest.raises(SystemExit):
+        cli.main([*argv, "--output", "-", "--log-format", "json"])
+    return capfd.readouterr().err
+
+
+ASSET_OWNERS = ["asset-owners", "--asset-id", "1"]
+
+
 def test_query_param_credentials_are_scrubbed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    restore_root_logger: None,
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
 ):
-    """A credential a provider sends as a query parameter is redacted like a header one."""
+    """A provider's query-parameter credential is redacted, raw and percent-encoded."""
 
     def auth_params(self: RobloxProvider) -> dict[str, str]:
-        return {"key": "SUPERSECRETPARAM"}
+        return {"key": "SECRET/PARAM VALUE"}
 
     monkeypatch.setattr(RobloxProvider, "auth_params", auth_params)
+    for echoed in ("SECRET/PARAM VALUE", "SECRET%2FPARAM%20VALUE", "SECRET%2FPARAM+VALUE"):
+        err = _stderr_when_target_echoes(monkeypatch, capfd, ASSET_OWNERS, echoed)
+        assert echoed not in err
+        assert "***" in err
 
-    def echo_secret(session: Any, ep: Endpoint, cursor: Any, budget: core.Budget) -> core.Result:
-        budget.take()
-        return core.Result(status=403, elapsed=0.01, error="denied: SUPERSECRETPARAM")
 
-    monkeypatch.setattr(core, "fetch", echo_secret)
-    argv = ["asset-owners", "--asset-id", "1", "--output", "-", "--log-format", "json"]
-    with pytest.raises(SystemExit):
-        cli.main(argv)
-    captured = capfd.readouterr()
-    assert "SUPERSECRETPARAM" not in captured.err
-    assert "***" in captured.err
+def test_credential_named_endpoint_header_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
+):
+    def extra_headers(self: Endpoint) -> dict[str, str]:
+        return {"X-Api-Key": "WHOLEHEADERSECRET"}
+
+    monkeypatch.setattr(AssetOwnersEndpoint, "extra_headers", extra_headers)
+    err = _stderr_when_target_echoes(monkeypatch, capfd, ASSET_OWNERS, "WHOLEHEADERSECRET")
+    assert "WHOLEHEADERSECRET" not in err
+    assert "***" in err
+
+
+def test_github_token_is_scrubbed(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
+):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_SECRETTOKENVALUE")
+    argv = ["github-stargazers", "--owner", "a", "--repo", "b"]
+    err = _stderr_when_target_echoes(monkeypatch, capfd, argv, "ghp_SECRETTOKENVALUE")
+    assert "ghp_SECRETTOKENVALUE" not in err
+    assert "***" in err
 
 
 def test_unwritable_output_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -518,9 +523,6 @@ def test_log_format_json_abort_path(
     _assert_all_stderr_json(capfd.readouterr().err)
 
 
-# --------------------------------------------------------------------------- #
-# main() crash / interrupt handling
-# --------------------------------------------------------------------------- #
 def test_main_crash_logs_json_and_exits_1(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], restore_root_logger: None
 ):
@@ -653,3 +655,23 @@ def test_log_format_json_drain_failure(
     ]
     cli.main(argv)
     _assert_all_stderr_json(capfd.readouterr().err)
+
+
+@pytest.mark.parametrize(
+    ("token", "auth_line"), [(None, "none (anonymous)"), ("ghp_x1234567", "credentials set")]
+)
+def test_auth_line_reflects_declared_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    restore_root_logger: None,
+    token: str | None,
+    auth_line: str,
+):
+    # GitHub's auth headers always carry Accept and an API version, token or not.
+    if token is None:
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_TOKEN", token)
+    argv = ["github-stargazers", "--owner", "a", "--repo", "b"]
+    err = _stderr_when_target_echoes(monkeypatch, capfd, argv, "denied")
+    assert f"Auth     : {auth_line}" in err

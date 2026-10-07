@@ -2,20 +2,20 @@
 parsing and auth moved to the Provider — see test_provider.py.)"""
 
 import threading
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 
-from sonde import core
+from sonde import core, logconfig
 from sonde.core import RClass
+from sonde.endpoint import PageResult
+from sonde.logconfig import register_log_secrets
 from tests.helpers import FakeEndpoint, FakeResp
 
 
-# --------------------------------------------------------------------------- #
-# RClass defaulting
-# --------------------------------------------------------------------------- #
 def test_default_rclass():
     assert core.default_rclass(200) == RClass.OK
     assert core.default_rclass(429) == RClass.THROTTLED
@@ -30,9 +30,6 @@ def test_result_derives_rclass_from_status():
     assert core.Result(403, 0.0, rclass=RClass.THROTTLED).rclass == RClass.THROTTLED
 
 
-# --------------------------------------------------------------------------- #
-# Budget
-# --------------------------------------------------------------------------- #
 def test_budget_basic():
     b = core.Budget(max_requests=3)
     assert [b.take() for _ in range(4)] == [True, True, True, False]
@@ -55,9 +52,6 @@ def test_budget_thread_safe():
     assert b.used == 1000
 
 
-# --------------------------------------------------------------------------- #
-# Session
-# --------------------------------------------------------------------------- #
 def test_build_session_pool_and_cookie_policy():
     s = core.build_session(headers={"Cookie": ".ROBLOSECURITY=X", "Accept": "application/json"})
     adapter = s.get_adapter("https://inventory.roblox.com")
@@ -90,9 +84,6 @@ def test_interesting_headers_excludes_secrets():
     assert core.interesting_headers(resp) == {"x-ratelimit-limit": "100", "server": "gw"}
 
 
-# --------------------------------------------------------------------------- #
-# parse_response (uses the endpoint's provider to classify)
-# --------------------------------------------------------------------------- #
 def test_parse_response_ok():
     resp = FakeResp(
         200,
@@ -128,9 +119,6 @@ def test_parse_response_error_captures_text():
     assert "boom" in res.error
 
 
-# --------------------------------------------------------------------------- #
-# fetch
-# --------------------------------------------------------------------------- #
 def test_fetch_budget_exhausted():
     res = core.fetch(
         session=requests.Session(), endpoint=FakeEndpoint(), cursor=None, budget=core.Budget(0)
@@ -152,3 +140,47 @@ def test_fetch_wires_endpoint_request(monkeypatch: pytest.MonkeyPatch):
     assert res.count == 1
     assert captured["method"] == "GET"
     assert captured["params"]["cursor"] == "CUR"
+
+
+@pytest.fixture
+def registered_secret() -> Iterator[str]:
+    logconfig._SECRETS.clear()
+    register_log_secrets(["SECRETTOKENVALUE"])
+    yield "SECRETTOKENVALUE"
+    logconfig._SECRETS.clear()
+
+
+def test_parse_response_scrubs_before_truncating(registered_secret: str):
+    # The secret straddles the 200-character cut, so truncating first would keep its start.
+    resp = FakeResp(500, text="x" * 195 + registered_secret + "y")
+    res = core.parse_response(resp, 0.1, FakeEndpoint())
+    assert res.error is not None
+    assert "SECRE" not in res.error
+
+
+def test_fetch_scrubs_a_connection_error(registered_secret: str, monkeypatch: pytest.MonkeyPatch):
+    def refuse(method: str, url: str, **kwargs: Any) -> FakeResp:
+        raise requests.ConnectionError(f"failed: {url}?key={registered_secret}")
+
+    session = requests.Session()
+    monkeypatch.setattr(session, "request", refuse)
+    res = core.fetch(session, FakeEndpoint(), cursor=None, budget=core.Budget(1))
+    assert res.error is not None
+    assert registered_secret not in res.error
+
+
+def test_parse_response_scrubs_a_parse_failure(
+    registered_secret: str, monkeypatch: pytest.MonkeyPatch
+):
+    def parse_page(self: FakeEndpoint, response: Any) -> PageResult:
+        raise ValueError(f"unexpected body: {registered_secret}")
+
+    monkeypatch.setattr(FakeEndpoint, "parse_page", parse_page)
+    res = core.parse_response(FakeResp(200, body={}), 0.1, FakeEndpoint())
+    assert res.error is not None
+    assert registered_secret not in res.error
+
+
+def test_interesting_headers_are_scrubbed(registered_secret: str):
+    resp = FakeResp(429, headers={"X-Request-Id": f"/probe?key={registered_secret}"})
+    assert registered_secret not in core.interesting_headers(resp)["X-Request-Id"]

@@ -19,6 +19,28 @@ Generated from the source docstrings.
    :show-inheritance:
 
 .. automodule:: sonde.phases
+
+.. automodule:: sonde.phases.probe
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: sonde.phases.sequential
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: sonde.phases.burst
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: sonde.phases.sweep
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: sonde.phases.estimate
    :members:
    :undoc-members:
    :show-inheritance:

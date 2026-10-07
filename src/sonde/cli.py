@@ -1,4 +1,4 @@
-"""cli.py — argument parsing, endpoint selection, and run orchestration.
+"""Argument parsing, endpoint selection, and run orchestration.
 
 Usage:
     python -m sonde <endpoint> [common options] [endpoint options]
@@ -13,36 +13,20 @@ import argparse
 import json
 import logging
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from sonde import core, endpoint, phases
 from sonde.logconfig import register_log_secrets, setup_logging
+from sonde.provider import has_authoritative_limit
 
 logger = logging.getLogger(__name__)
 
-# Header names whose values are credentials and must be kept out of logs.
+# Header names whose whole value is a credential, whether the provider or the endpoint
+# set the header.
 _SECRET_HEADER_KEYS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key"})
-# A shorter bare value could be a fragment of ordinary text, and redacting it would
-# mangle unrelated log lines.
-_MIN_SECRET_LEN = 8
-
-
-def _secret_variants(value: str) -> Iterable[str]:
-    """Yield a credential and any bare token inside it.
-
-    A target that echoes only the token, without `Bearer ` or `.ROBLOSECURITY=`, is
-    still redacted.
-
-    >>> list(_secret_variants("Bearer abcd1234efgh"))
-    ['Bearer abcd1234efgh', 'abcd1234efgh']
-    """
-    yield value
-    for sep in (" ", "="):  # "Bearer <tok>", ".ROBLOSECURITY=<cookie>"
-        _, found, bare = value.partition(sep)
-        if found and len(bare) >= _MIN_SECRET_LEN:
-            yield bare
 
 
 def _list_of[T: float](convert: Callable[[str], T], kind: str) -> Callable[[str], list[T]]:
@@ -207,11 +191,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     budget = core.Budget(max_requests=args.max_requests)
     # base headers < provider auth < endpoint extras
     headers = {**core.BASE_HEADERS, **provider.auth_headers(), **ep.extra_headers()}
-    # Keep our own credentials out of logs: a target can echo them back, and a connection
-    # error can quote the URL with its query parameters.
-    secrets = [v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS]
-    secrets += provider.auth_params().values()
-    register_log_secrets(variant for v in secrets for variant in _secret_variants(v))
+    # Keep our own credentials out of logs and the report: a target can echo them back,
+    # and a connection error can quote the URL, with the query parameters percent-encoded.
+    params = list(provider.auth_params().values())
+    register_log_secrets(
+        [
+            *provider.credentials(),
+            *params,
+            *(quote(v, safe="") for v in params),
+            *(quote_plus(v) for v in params),
+            *(v for k, v in headers.items() if k.lower() in _SECRET_HEADER_KEYS),
+        ]
+    )
     probe = phases.Probe(
         endpoint=ep, budget=budget, session=core.build_session(headers=headers), headers=headers
     )
@@ -220,7 +211,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     logger.info("Provider : %s", provider.name)
     logger.info(
         "Auth     : %s",
-        "credentials set" if provider.auth_headers() else "none (anonymous)",
+        "credentials set"
+        if provider.credentials() or provider.auth_params()
+        else "none (anonymous)",
     )
     logger.info("Budget   : %s requests total", args.max_requests)
 
@@ -261,7 +254,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["measured_window_seconds"] = measured.measured_window
 
     sweep_rows: list[dict[str, Any]] = []
-    headers_authoritative = phases.has_authoritative_limit(rl)
+    headers_authoritative = has_authoritative_limit(rl)
     run_sweep = (not args.skip_sweep) and (args.force_sweep or not headers_authoritative)
     if run_sweep:
         sweep = phases.SweepConfig(
@@ -315,10 +308,7 @@ def _dump(path: str, report: dict[str, Any]) -> None:
 
 
 def _aborted(report: dict[str, Any]) -> bool:
-    """Return True when the probe stopped because the endpoint gave no usable response.
-
-    main() maps this to a non-zero exit, so CI can detect it.
-    """
+    """Return True when the probe stopped because the endpoint gave no usable response."""
     sanity = report.get("sanity")
     return bool(sanity) and sanity.get("rclass") != core.RClass.OK
 

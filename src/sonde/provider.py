@@ -1,13 +1,14 @@
-"""provider.py — the per-API "provider" abstraction.
+"""The per-API "provider" abstraction.
 
 A Provider captures everything that varies by API rather than by endpoint:
 
 - `classify(response)`: what counts as success or throttling.
 - `parse_rate_limit(headers)`: the API's rate-limit headers, normalised.
 - `auth_headers()` and `auth_params()`: credentials as headers or query parameters.
+- `credentials()`: the raw secrets inside those headers, so logs can redact them.
 
 The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
-IETF `RateLimit`-draft header format (which is what Roblox uses), and no auth.
+IETF `RateLimit`-draft header format, and no auth.
 Subclasses specialise. Endpoints choose a provider in `Endpoint._make_provider()`.
 
 The normalised rate-limit dict has the keys `limit`, `window_s`, `remaining`,
@@ -24,9 +25,9 @@ import time
 from http import HTTPStatus
 from typing import Any, override
 
-from sonde.core import RClass
+from sonde.core import RClass, default_rclass
 
-__all__ = ["GitHubProvider", "Provider", "RobloxProvider"]
+__all__ = ["GitHubProvider", "Provider", "RobloxProvider", "has_authoritative_limit"]
 
 
 class Provider:
@@ -34,17 +35,10 @@ class Provider:
 
     name = "generic"
 
-    # --- classification ---
     def classify(self, resp: Any) -> RClass:
         """Return how a response counts: ok, throttled, or an error."""
-        sc = resp.status_code
-        if sc == HTTPStatus.OK:
-            return RClass.OK
-        if sc == HTTPStatus.TOO_MANY_REQUESTS:
-            return RClass.THROTTLED
-        return RClass.ERROR
+        return default_rclass(resp.status_code)
 
-    # --- rate-limit header parsing (IETF RateLimit draft, e.g. Roblox) ---
     def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
         """Normalise the response's rate-limit headers, or return {} when it has none.
 
@@ -93,7 +87,6 @@ class Provider:
             "raw": {k: v for k, v in low.items() if k.startswith("x-ratelimit")},
         }
 
-    # --- auth ---
     def auth_headers(self) -> dict[str, str]:
         """Return the credentials sent as headers."""
         return {}
@@ -101,6 +94,15 @@ class Provider:
     def auth_params(self) -> dict[str, str]:
         """Return the credentials sent as query parameters."""
         return {}
+
+    def credentials(self) -> list[str]:
+        """Return the raw secrets inside `auth_headers()`, to redact from logs.
+
+        A provider whose `auth_headers()` carries a credential overrides this too, since
+        only it knows the header's format. Query-parameter values are redacted without
+        being listed here.
+        """
+        return []
 
 
 class RobloxProvider(Provider):
@@ -112,16 +114,23 @@ class RobloxProvider(Provider):
 
     name = "roblox"
 
+    def __init__(self) -> None:
+        """Read the credentials from `ROBLOX_COOKIE` and `ROBLOX_BEARER`, if set."""
+        self._cookie = os.environ.get("ROBLOX_COOKIE")
+        self._bearer = os.environ.get("ROBLOX_BEARER")
+
     @override
     def auth_headers(self) -> dict[str, str]:
         h: dict[str, str] = {}
-        cookie = os.environ.get("ROBLOX_COOKIE")
-        bearer = os.environ.get("ROBLOX_BEARER")
-        if cookie:
-            h["Cookie"] = f".ROBLOSECURITY={cookie}"  # legacy web-session auth
-        if bearer:
-            h["Authorization"] = f"Bearer {bearer}"  # Open Cloud (ignored by legacy)
+        if self._cookie:
+            h["Cookie"] = f".ROBLOSECURITY={self._cookie}"  # legacy web-session auth
+        if self._bearer:
+            h["Authorization"] = f"Bearer {self._bearer}"  # Open Cloud (ignored by legacy)
         return h
+
+    @override
+    def credentials(self) -> list[str]:
+        return [c for c in (self._cookie, self._bearer) if c]
 
 
 class GitHubProvider(Provider):
@@ -135,28 +144,24 @@ class GitHubProvider(Provider):
     name = "github"
 
     def __init__(self, window_s: int = 3600) -> None:
-        """Set the rate-limit window the headers don't state.
+        """Set the rate-limit window, and read the token from `GITHUB_TOKEN`, if set.
 
         Args:
-            window_s: The window in seconds. The core API's is an hour; other
-                resources differ (search's is 60 seconds).
+            window_s: The window in seconds, which the headers don't state. The core
+                API's is an hour; other resources differ (search's is 60 seconds).
         """
         self.window_s = window_s
+        self._token = os.environ.get("GITHUB_TOKEN")
 
     @override
     def classify(self, resp: Any) -> RClass:
-        sc = resp.status_code
-        if sc == HTTPStatus.OK:
-            return RClass.OK
-        if sc == HTTPStatus.TOO_MANY_REQUESTS:
-            return RClass.THROTTLED
         # primary limit -> 403 with remaining 0; secondary -> 403 with Retry-After
-        if sc == HTTPStatus.FORBIDDEN and (
+        if resp.status_code == HTTPStatus.FORBIDDEN and (
             resp.headers.get("x-ratelimit-remaining") == "0"
             or resp.headers.get("retry-after") is not None
         ):
             return RClass.THROTTLED
-        return RClass.ERROR
+        return super().classify(resp)
 
     @override
     def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
@@ -178,10 +183,13 @@ class GitHubProvider(Provider):
     @override
     def auth_headers(self) -> dict[str, str]:
         h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
-        tok = os.environ.get("GITHUB_TOKEN")
-        if tok:
-            h["Authorization"] = f"Bearer {tok}"
+        if self._token:
+            h["Authorization"] = f"Bearer {self._token}"
         return h
+
+    @override
+    def credentials(self) -> list[str]:
+        return [self._token] if self._token else []
 
 
 def _first_int(raw: Any) -> int | None:
@@ -191,3 +199,8 @@ def _first_int(raw: Any) -> int | None:
         return int(str(raw).split(",")[0].strip())
     except (ValueError, AttributeError):
         return None
+
+
+def has_authoritative_limit(rate_limit: dict[str, Any]) -> bool:
+    """Return whether the parsed rate-limit headers state both a limit and its window."""
+    return bool(rate_limit.get("limit") and rate_limit.get("window_s"))

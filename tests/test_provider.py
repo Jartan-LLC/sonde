@@ -10,9 +10,6 @@ from sonde.provider import GitHubProvider, Provider, RobloxProvider
 from tests.helpers import RLH_15, RLH_420, FakeResp
 
 
-# --------------------------------------------------------------------------- #
-# Generic provider (== Roblox classification + IETF header parsing)
-# --------------------------------------------------------------------------- #
 def test_generic_classify():
     p = Provider()
     assert p.classify(FakeResp(200)) == RClass.OK
@@ -52,9 +49,6 @@ def test_ietf_no_window():
     assert rl["limit"] == 500
 
 
-# --------------------------------------------------------------------------- #
-# Roblox provider
-# --------------------------------------------------------------------------- #
 def test_roblox_auth_cookie_and_bearer(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ROBLOX_COOKIE", "SEKRET")
     monkeypatch.setenv("ROBLOX_BEARER", "TOK")
@@ -74,9 +68,6 @@ def test_roblox_uses_ietf_parse():
     assert RobloxProvider().parse_rate_limit(RLH_420)["window_s"] == 60
 
 
-# --------------------------------------------------------------------------- #
-# GitHub provider
-# --------------------------------------------------------------------------- #
 def test_github_classify_403_throttle():
     p = GitHubProvider()
     assert p.classify(FakeResp(200)) == RClass.OK
@@ -115,3 +106,19 @@ def test_github_auth_token(monkeypatch: pytest.MonkeyPatch):
     h = GitHubProvider().auth_headers()
     assert h["Authorization"] == "Bearer ghp_xxx"
     assert h["Accept"] == "application/vnd.github+json"
+
+
+def test_credentials_are_the_raw_secrets(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ROBLOX_COOKIE", "SEKRET")
+    monkeypatch.setenv("ROBLOX_BEARER", "TOK")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_xxx")
+    assert RobloxProvider().credentials() == ["SEKRET", "TOK"]
+    assert GitHubProvider().credentials() == ["ghp_xxx"]
+    assert Provider().credentials() == []
+
+
+def test_credentials_empty_without_env(monkeypatch: pytest.MonkeyPatch):
+    for var in ("ROBLOX_COOKIE", "ROBLOX_BEARER", "GITHUB_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    assert RobloxProvider().credentials() == []
+    assert GitHubProvider().credentials() == []

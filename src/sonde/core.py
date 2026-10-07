@@ -1,4 +1,4 @@
-"""core.py — endpoint- and provider-agnostic HTTP plumbing.
+"""Endpoint- and provider-agnostic HTTP plumbing.
 
 Response classification, rate-limit-header parsing, and auth are NOT here — those
 vary per API and live behind the Provider interface (provider.py). core only knows
@@ -20,6 +20,7 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from sonde import __version__
+from sonde.logconfig import scrub
 
 if TYPE_CHECKING:
     from sonde.endpoint import Endpoint, RequestSpec
@@ -46,9 +47,6 @@ BASE_HEADERS = {
 HEADER_SUBSTRINGS = ("ratelimit", "retry-after", "x-request", "server", "cf-ray")
 
 
-# --------------------------------------------------------------------------- #
-# Normalised response class — phases branch on this, never on raw status.
-# --------------------------------------------------------------------------- #
 class RClass(StrEnum):
     """How a response counts for the phases, whatever its raw status."""
 
@@ -79,9 +77,6 @@ def default_rclass(status: int) -> RClass:
     return RClass.ERROR
 
 
-# --------------------------------------------------------------------------- #
-# Request budget: thread-safe hard ceiling.
-# --------------------------------------------------------------------------- #
 @dataclass
 class Budget:
     """A thread-safe ceiling on the requests a run may send.
@@ -109,20 +104,17 @@ class Budget:
             return max(0, self.max_requests - self.used)
 
 
-# --------------------------------------------------------------------------- #
-# Session
-# --------------------------------------------------------------------------- #
 def build_session(headers: dict[str, str] | None = None) -> requests.Session:
-    """Build the session the serial phases share.
+    """Build the session the serial phases share: no retries, and no cookies kept.
 
-    Auth rides on headers, so the no-write cookie jar is never mutated. The burst
-    phase builds its own httpx client.
+    A server's Set-Cookie is refused, so every request carries the same credentials:
+    the ones in the headers.
 
     Args:
         headers: Request headers; `BASE_HEADERS` when omitted.
 
     Returns:
-        A session with no retries and no cookie storage.
+        The session.
     """
     s = requests.Session()
     s.headers.update(headers or dict(BASE_HEADERS))
@@ -133,9 +125,6 @@ def build_session(headers: dict[str, str] | None = None) -> requests.Session:
     return s
 
 
-# --------------------------------------------------------------------------- #
-# Result + response handling
-# --------------------------------------------------------------------------- #
 @dataclass
 class Result:
     """One request's outcome, as the phases read it."""
@@ -157,9 +146,14 @@ class Result:
 
 
 def interesting_headers(resp: Any) -> dict[str, str]:
-    """Return the response headers worth reporting: rate limits, retry hints, server IDs."""
+    """Return the response headers worth reporting: rate limits, retry hints, server IDs.
+
+    Values are scrubbed of registered secrets, since a server can reflect the request in them.
+    """
     return {
-        k: v for k, v in resp.headers.items() if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
+        k: scrub(v)
+        for k, v in resp.headers.items()
+        if any(sub in k.lower() for sub in HEADER_SUBSTRINGS)
     }
 
 
@@ -204,9 +198,9 @@ def parse_response(resp: Any, elapsed: float, endpoint: Endpoint) -> Result:
             res.count = page.count
             res.next_cursor = page.next_cursor
         except _PARSE_ERRORS as e:
-            res.error = f"OK response but parse_page failed: {e}"
+            res.error = scrub(f"OK response but parse_page failed: {e}")
     elif rclass == RClass.ERROR and resp.status_code >= HTTPStatus.BAD_REQUEST:
-        res.error = resp.text[:200]
+        res.error = scrub(resp.text)[:200]  # scrubbed first, so the cut can't split a secret
     return res
 
 
@@ -233,5 +227,7 @@ def fetch(session: requests.Session, endpoint: Endpoint, cursor: Any, budget: Bu
             spec.method, spec.url, params=params, json=spec.json_body, timeout=30
         )
     except requests.RequestException as e:
-        return Result(status=0, elapsed=time.perf_counter() - t0, rclass=RClass.ERROR, error=str(e))
+        return Result(
+            status=0, elapsed=time.perf_counter() - t0, rclass=RClass.ERROR, error=scrub(str(e))
+        )
     return parse_response(resp, time.perf_counter() - t0, endpoint)
