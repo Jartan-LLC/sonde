@@ -13,13 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python 3.14 is tested and listed as supported.
 - Endpoints from installed packages: a package that declares an `Endpoint` subclass under
-  the `sonde.endpoints` entry-point group adds a `sonde` subcommand, built on the names
-  `sonde` exports (see the README's "Adding an Endpoint"). A plugin that won't load stops
-  the CLI with exit code 2 and names its entry point.
+  the `sonde.endpoints` entry-point group adds a `sonde` subcommand; the names `sonde`
+  exports are the API it builds on (see the README's "Adding an Endpoint"). While a plugin
+  fails to load, every `sonde` command exits 2 with an error naming it.
 
 ### Changed
 
 - `requests` is capped at `<3` and `httpx` at `<1`.
+- Building the image from a checkout needs BuildKit, Docker's default builder since 23.0.
 - The `latest` image tag moves only for the highest release, so a patch to an older
   release line doesn't take it.
 
