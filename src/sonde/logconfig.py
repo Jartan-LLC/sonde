@@ -53,7 +53,7 @@ def _echo_pattern(secret: str) -> str:
     """Return a regex for `secret` with any of its characters JSON-escaped, or none."""
     parts: list[str] = []
     for c in secret:
-        forms = [re.escape(c)]
+        forms: list[str] = []
         if c in _SHORT_ESCAPES:
             forms.append(re.escape("\\" + _SHORT_ESCAPES[c]))
         # JSON escapes UTF-16 code units, so a character outside the BMP is a surrogate pair.
@@ -61,6 +61,8 @@ def _echo_pattern(secret: str) -> str:
         utf16 = c.encode("utf-16-be", "surrogatepass")
         units = (int.from_bytes(utf16[i : i + 2]) for i in range(0, len(utf16), 2))
         forms.append("".join(map(_unicode_escape, units)))
+        # Raw form last: a raw backslash would otherwise match an escape's first character.
+        forms.append(re.escape(c))
         parts.append(f"(?:{'|'.join(forms)})")
     return "".join(parts)
 

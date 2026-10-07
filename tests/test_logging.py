@@ -249,6 +249,11 @@ class TestSecretRedaction:
             ('tok"en12345', r"tok\"en12345"),
             ("abc\\defghij", r"abc\\defghij"),
             ("abc\tdefghij", r"abc\tdefghij"),
+            ("abc\bdefgh", r"abc\bdefgh"),
+            ("abc\fdefgh", r"abc\fdefgh"),
+            ("abc\ndefgh", r"abc\ndefgh"),
+            ("abc\rdefgh", r"abc\rdefgh"),
+            ("abcdefgh\\", r"abcdefgh\\"),  # a trailing backslash
             ("abc\tdefghij", r"abc\u0009defghij"),
             ("tökenvalue", r"t\u00f6kenvalue"),
             ("tökenvalue", r"t\u00F6kenvalue"),
@@ -267,6 +272,7 @@ class TestSecretRedaction:
         secret = "abcd" + chr(0xDC80) + "efgh"
         register_log_secrets([secret])
         assert scrub(f"tok {secret}") == "tok ***"
+        assert scrub(f"tok {json.dumps(secret)[1:-1]}") == "tok ***"
 
     def test_letters_match_only_in_their_own_case(self):
         register_log_secrets(["abcdefghij"])
