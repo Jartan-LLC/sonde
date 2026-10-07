@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonde.phases` is a package, split into modules by phase. Its public names import from
   `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
 - Providers read their credentials from the environment when they are constructed.
+- The container image no longer includes `uv`, which only its build uses; an image built
+  on it installs packages with `pip`.
 - `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
   rate-limit headers, rather than a dict. The phases return typed results too
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
