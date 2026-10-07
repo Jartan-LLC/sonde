@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-07
+
 ### Added
 
 - Python 3.14 support.
@@ -35,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rate-limit headers, rather than a dict. The phases return typed results too
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
   report's JSON is unchanged.
+- `requests` and `httpx` are bounded below their next major versions (`<3` and `<1`).
+- The container image's output is unbuffered, so logs reach `docker logs` as they are
+  written.
+- The `latest` container image tag moves only when the released version is the highest
+  so far, so a patch to an older release line doesn't take it.
 
 ### Fixed
 
@@ -91,5 +98,6 @@ Initial release.
 - Redaction of configured credentials from log output.
 - Docker image and PyPI packaging.
 
-[Unreleased]: https://github.com/Jartan-LLC/sonde/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Jartan-LLC/sonde/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Jartan-LLC/sonde/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jartan-LLC/sonde/releases/tag/v0.1.0
