@@ -39,7 +39,8 @@ def register_log_secrets(values: Iterable[str]) -> None:
     for v in values:
         if len(v) >= _MIN_SECRET_LEN and v not in _SECRETS:
             _SECRETS.append(v)
-    _SECRETS.sort(key=len, reverse=True)  # so a shorter secret can't split a longer one
+    # Longest first, so where two secrets start at the same place the longer is redacted.
+    _SECRETS.sort(key=len, reverse=True)
 
 
 def _unicode_escape(code: int) -> str:
@@ -56,13 +57,15 @@ def _echo_pattern(secret: str) -> str:
         if c in _SHORT_ESCAPES:
             forms.append(re.escape("\\" + _SHORT_ESCAPES[c]))
         # JSON escapes UTF-16 code units, so a character outside the BMP is a surrogate pair.
-        utf16 = c.encode("utf-16-be")
+        # surrogatepass: a credential read from a non-UTF-8 environment can hold one.
+        utf16 = c.encode("utf-16-be", "surrogatepass")
         units = (int.from_bytes(utf16[i : i + 2]) for i in range(0, len(utf16), 2))
         forms.append("".join(map(_unicode_escape, units)))
         parts.append(f"(?:{'|'.join(forms)})")
     return "".join(parts)
 
 
+# Keyed on the secrets themselves: setup_logging and the tests clear _SECRETS in place.
 @functools.lru_cache(maxsize=1)
 def _secrets_pattern(secrets: tuple[str, ...]) -> re.Pattern[str] | None:
     return re.compile("|".join(map(_echo_pattern, secrets))) if secrets else None

@@ -262,6 +262,12 @@ class TestSecretRedaction:
         register_log_secrets([secret])
         assert scrub(f'{{"error": "bad {echo}"}}') == '{"error": "bad ***"}'
 
+    def test_secret_with_a_lone_surrogate_is_redacted(self):
+        # os.environ decodes a non-UTF-8 byte to a lone surrogate.
+        secret = "abcd" + chr(0xDC80) + "efgh"
+        register_log_secrets([secret])
+        assert scrub(f"tok {secret}") == "tok ***"
+
     def test_letters_match_only_in_their_own_case(self):
         register_log_secrets(["abcdefghij"])
         assert scrub("ABCDEFGHIJ abcdefghij") == "ABCDEFGHIJ ***"
