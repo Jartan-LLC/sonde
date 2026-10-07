@@ -287,11 +287,14 @@ def _sweep(
     cursor_pool: list[Any],
     rate_limit: RateLimit | None,
 ) -> tuple[float | None, list[phases.SweepRow]]:
-    """Run the sweep when no authoritative headers make it redundant, or when forced.
+    """Run the sweep unless it is skipped or redundant.
+
+    `--skip-sweep` always skips it; authoritative rate-limit headers make it redundant
+    unless `--force-sweep` is set.
 
     Returns:
         The fastest clean interval (None if none was found or the sweep didn't run),
-        and its rows.
+        and the sweep's rows.
     """
     if args.skip_sweep:
         return None, []

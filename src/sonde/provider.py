@@ -8,7 +8,7 @@ A Provider captures everything that varies by API rather than by endpoint:
 - `credentials()`: the raw secrets inside those headers, so logs can redact them.
 
 The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
-IETF `RateLimit`-draft header format, and no auth.
+IETF rate-limit header draft, and no auth.
 Subclasses specialise. Endpoints choose a provider in `Endpoint._make_provider()`.
 """
 
@@ -37,7 +37,8 @@ class RateLimit:
         remaining: Requests left in the current window, when stated.
         reset_s: Seconds until the window resets, when stated (epoch formats are
             converted).
-        policies: Every (limit, window_s) policy the headers list.
+        policies: Every (limit, window_s) policy, as the headers list them or the provider
+            knows them.
         raw: The rate-limit headers as received, with lower-cased names.
     """
 
@@ -221,7 +222,7 @@ def _first_int(raw: Any) -> int | None:
 
 
 def authoritative_limit(rate_limit: RateLimit | None) -> tuple[int, int] | None:
-    """Return the (limit, window_s) the headers state, or None unless they state both."""
+    """Return the (limit, window_s) pair when both are known and nonzero, else None."""
     if rate_limit is None or not rate_limit.limit or not rate_limit.window_s:
         return None
     return rate_limit.limit, rate_limit.window_s

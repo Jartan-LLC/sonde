@@ -16,7 +16,7 @@ from sonde.phases import burst, probe, sweep
 from sonde.provider import Provider
 from tests.helpers import FakeClock, FakeEndpoint, Handler, make_bucket, make_probe
 
-# A sequential phase that measured nothing, so the estimate falls past its rungs.
+# A sequential phase that measured nothing, so neither sequential rung of the estimate applies.
 _NO_SEQ = phases.SequentialSummary(
     successful_before_429=0,
     first_429_at_request=None,
@@ -148,8 +148,6 @@ def test_summarise_burst_counts():
     assert row.ok_200 == 7
     assert row.throttled_429 == 3
     assert row.max_retry_after == 5.0
-    # window decision (Retry-After vs adaptive recovery) lives at the async call
-    # site now, so it's exercised in test_burst.py, not here.
 
 
 def test_estimate_prefers_headers():

@@ -1,5 +1,4 @@
-"""Tests for core: budget, session, response handling, fetch. (Rate-limit header
-parsing and auth moved to the Provider — see test_provider.py.)"""
+"""Tests for core: budget, session, response handling, fetch."""
 
 import threading
 from collections.abc import Callable, Iterator

@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is truncated or logged, and so are the response headers the report records.
 - An error body is read as UTF-8, whatever charset the response declares or the HTTP
   client guesses, so a legacy charset can't alter an echoed credential and slip it past
-  the redaction.
+  the redaction. A credential echoed in a UTF-16 or UTF-32 body isn't redacted.
 
 ## [0.1.0] - 2026-07-02
 

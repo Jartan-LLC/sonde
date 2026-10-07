@@ -23,13 +23,13 @@ class SequentialSummary:
     """What the sequential phase measured.
 
     Attributes:
-        successful_before_429: Successful requests before the first throttle, or in all
-            when nothing throttled.
+        successful_before_429: Successful requests before the phase stopped: at the first
+            throttle, or otherwise at an error, the budget or the cap.
         first_429_at_request: The first throttled request's number, counting from 1, or
             None when nothing throttled.
         wall_seconds: The phase's wall time.
         seq_req_per_sec: Successful requests per second, or None when no time passed.
-        avg_latency_ms: The successful requests' mean latency, or None without one.
+        avg_latency_ms: The successful requests' mean latency, or None when none succeeded.
         retry_after: The last response's Retry-After in seconds, when it sent one.
     """
 

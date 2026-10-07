@@ -50,7 +50,8 @@ class BurstRow:
         other: Every other outcome, errors and budget refusals included.
         wall_seconds: The burst's wall time.
         launch_spread_ms: The time from the first request's launch to the last's.
-        max_retry_after: The longest Retry-After among the responses, in seconds.
+        max_retry_after: The longest Retry-After among the responses, in seconds, or None
+            when none sent one.
     """
 
     burst_size: int

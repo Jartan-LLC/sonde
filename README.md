@@ -41,11 +41,7 @@ export GITHUB_TOKEN="ghp_..."
 sonde github-stargazers --owner Jartan-LLC --repo sonde
 ```
 
-Anonymous probing (no auth) works too -- you'll just hit lower rate limits:
-
-```bash
-sonde github-stargazers --owner Jartan-LLC --repo sonde
-```
+Without `GITHUB_TOKEN`, sonde probes anonymously, at GitHub's lower rate limit.
 
 Results are written to `sonde_report.json` by default:
 
