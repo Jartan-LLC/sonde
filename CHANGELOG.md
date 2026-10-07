@@ -56,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client guesses, so a legacy charset can't alter an echoed credential and slip it past
   the redaction. A credential echoed in a UTF-16 or UTF-32 body isn't redacted.
 - A credential echoed in a JSON body is redacted however the encoder escaped its
-  characters.
+  characters. One escaped twice, as in JSON nested inside a JSON string, isn't.
 
 ## [0.1.0] - 2026-07-02
 

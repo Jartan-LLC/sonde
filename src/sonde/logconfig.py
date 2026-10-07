@@ -57,7 +57,7 @@ def _echo_pattern(secret: str) -> str:
         if c in _SHORT_ESCAPES:
             forms.append(re.escape("\\" + _SHORT_ESCAPES[c]))
         # JSON escapes UTF-16 code units, so a character outside the BMP is a surrogate pair.
-        # surrogatepass: a credential read from a non-UTF-8 environment can hold one.
+        # surrogatepass: os.environ decodes a non-UTF-8 byte to a lone surrogate.
         utf16 = c.encode("utf-16-be", "surrogatepass")
         units = (int.from_bytes(utf16[i : i + 2]) for i in range(0, len(utf16), 2))
         forms.append("".join(map(_unicode_escape, units)))
@@ -77,7 +77,8 @@ def scrub(text: str) -> str:
     """Return `text` with every registered secret replaced by `***`.
 
     A secret also matches with any of its characters JSON-escaped, so an echo in a JSON
-    body is redacted however its encoder escaped it.
+    body is redacted however its encoder escaped it. An echo escaped twice, as in JSON
+    nested inside a JSON string, isn't.
     """
     pattern = _secrets_pattern(tuple(_SECRETS))
     return pattern.sub("***", text) if pattern else text
