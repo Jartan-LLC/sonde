@@ -214,6 +214,9 @@ def test_parse_response_scrubs_whatever_the_body_charset(
     tilde_secret: str, make: Callable[[int, bytes, str], Any]
 ):
     # shift_jis_2004 decodes "~" as "‾", so decoding with it hides the secret from scrub.
-    resp = make(401, f"bad token {tilde_secret}".encode(), "shift_jis_2004")
-    res = core.parse_response(resp, 0.1, FakeEndpoint())
-    assert res.error == "bad token ***"
+    # The Shift_JIS prefix isn't valid UTF-8, so the decode must replace, not raise or drop.
+    body = "エラー: ".encode("shift_jis") + f"bad token {tilde_secret}".encode()
+    res = core.parse_response(make(401, body, "shift_jis_2004"), 0.1, FakeEndpoint())
+    assert res.error is not None
+    assert res.error.endswith(": bad token ***")
+    assert "\ufffd" in res.error

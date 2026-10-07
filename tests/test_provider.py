@@ -6,7 +6,7 @@ import time
 import pytest
 
 from sonde.core import RClass
-from sonde.provider import GitHubProvider, Provider, RobloxProvider
+from sonde.provider import GitHubProvider, Provider, RobloxProvider, authoritative_limit
 from tests.helpers import RLH_15, RLH_420, FakeResp
 
 
@@ -51,6 +51,12 @@ def test_ietf_no_window():
     assert rl is not None
     assert rl.window_s is None
     assert rl.limit == 500
+
+
+def test_authoritative_limit_needs_a_limit_and_its_window():
+    assert authoritative_limit(Provider().parse_rate_limit(RLH_420)) == (420, 60)
+    assert authoritative_limit(Provider().parse_rate_limit({"x-ratelimit-limit": "500"})) is None
+    assert authoritative_limit(None) is None
 
 
 def test_roblox_auth_cookie_and_bearer(monkeypatch: pytest.MonkeyPatch):

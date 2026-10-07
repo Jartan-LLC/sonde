@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from sonde import cli, core, endpoint
+from sonde import cli, core, endpoint, phases
 from sonde.cli import build_parser
 from sonde.endpoint import Endpoint
 from sonde.endpoints.asset_owners import AssetOwnersEndpoint
@@ -207,6 +207,21 @@ def test_run_report_shape(clock: FakeClock, tmp_path: Path, monkeypatch: pytest.
             "effective_req_per_s",
         ]
     ]
+
+
+def test_run_skip_flags_skip_their_phases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a skipped phase ran")
+
+    # No rate-limit headers, so without --skip-sweep the sweep would run.
+    monkeypatch.setattr(core, "fetch", make_bucket(0.05, 30, headers={"server": "x"}))
+    monkeypatch.setattr(phases, "phase_burst", must_not_run)
+    monkeypatch.setattr(phases, "phase_sweep", must_not_run)
+    args, _ = _args(tmp_path, "--skip-burst", "--skip-sweep")
+    report = cli.run(args)
+    assert report["burst"] == []
+    assert report["sweep"] == []
+    assert report["swept_floor_interval_s"] is None
 
 
 def test_run_aborts_on_non_200(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

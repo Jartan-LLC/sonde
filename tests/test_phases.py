@@ -178,6 +178,22 @@ def test_estimate_prefers_headers():
     assert est["estimated_minutes"] == pytest.approx(43.7, abs=0.5)
 
 
+def test_estimate_falls_back_to_sequential_throttle():
+    est = phases.phase_estimate(
+        FakeEndpoint(total=None, page_size=100),
+        phases.Measurements(
+            page_count=100,
+            rate_limit=None,
+            seq_summary=replace(
+                _NO_SEQ, successful_before_429=10, first_429_at_request=11, wall_seconds=2.0
+            ),
+        ),
+        margin=0.8,
+    )
+    assert est["safe_rate_basis"] == "sequential 10 req / 2.0s"
+    assert est["safe_rate_per_min"] == pytest.approx(240.0)  # 10 / 2.0s * 60 * 0.8
+
+
 def test_estimate_falls_back_to_sweep():
     est = phases.phase_estimate(
         FakeEndpoint(total=500_000, page_size=100),

@@ -15,7 +15,7 @@ from sonde.provider import RateLimit, authoritative_limit
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Measurements:
     """What the earlier phases found, which the estimate turns into a rate.
 
