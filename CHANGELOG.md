@@ -7,62 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-07
+
 ### Added
 
-- Python 3.14 support.
+- Python 3.14 is tested and listed as supported.
 - Endpoints from installed packages: a package that declares an `Endpoint` subclass under
-  the `sonde.endpoints` entry-point group adds a `sonde` subcommand. A plugin that won't
-  load stops the CLI with exit code 2 and names its entry point.
-- `RClass`, `RateLimit`, `GitHubProvider` and `RobloxProvider` are importable from `sonde`.
-- Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
-- `core.parse_response`, `core.request_args`, `logconfig.scrub` and
-  `provider.authoritative_limit` as public functions.
-- `Provider.credentials()`: the raw secrets in a provider's auth headers, which the CLI
-  redacts from logs.
+  the `sonde.endpoints` entry-point group adds a `sonde` subcommand (see the README's
+  "Adding an Endpoint"). If an installed plugin fails to load, every `sonde` command exits
+  2 with an error naming it.
 
 ### Changed
 
-- The source distribution ships the whole test suite, including `tests/conftest.py` and
-  `tests/helpers.py`.
-- The `sonde.phases` functions take grouped arguments: the probing phases take a `Probe`
-  (endpoint, budget, session, headers), `phase_burst` and `phase_sweep` also take a
-  `BurstConfig` or `SweepConfig`, and `phase_estimate` takes a `Measurements`.
-- `RClass` is a `StrEnum`, so `str(RClass.OK)` is `"ok"`.
-- `register` returns the decorated class's own type, so type checkers see a registered
-  endpoint's constructor.
-- `endpoint.get` and `endpoint.all_endpoints` include the built-in endpoints without an
-  import of `sonde.endpoints` first.
-- `sonde.phases` is a package, split into modules by phase. Its public names import from
-  `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
-- Providers read their credentials from the environment when they are constructed.
-- `Endpoint._make_provider()` is now `Endpoint.make_provider()`. Rename your override: one
-  still named `_make_provider` is never called, and the endpoint gets the generic provider.
-- `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
-  rate-limit headers, rather than a dict. The phases return typed results too
-  (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
-  report's JSON is unchanged.
+- `requests` is capped at `<3` and `httpx` at `<1`.
+- Building the image from a checkout needs BuildKit, Docker's default builder since 23.0.
+- The `latest` image tag moves only for the highest release, so a patch to an older
+  release line doesn't take it.
+
+### Removed
+
+- The `0` image tag. It stays on 0.1.0: pull `0.2`, a full version, or `latest`.
 
 ### Fixed
 
-- A burst the same size as the last one in `--burst-sizes` gets its cooldown.
-- The sweep's floor message names no interval, rather than printing `Nones`, when the
-  first interval tried throttles.
-- `--burst-sizes` and `--sweep-intervals` refuse zero and negative values, which crashed
+- A burst size that repeats the last one in `--burst-sizes`, such as the first 50 in
+  `10,50,50`, gets its cooldown.
+- The sweep's floor message no longer prints `Nones` when the first interval tried
+  throttles.
+- `--burst-sizes` and `--sweep-intervals` reject zero and negative values, which crashed
   the probe or produced a meaningless report row.
+- The startup `Auth` line no longer says `credentials set` for a `github-stargazers` run
+  without `GITHUB_TOKEN`.
 
 ### Security
 
-- Logs redact the credentials each provider declares for its headers and its query
-  parameters, including their percent-encoded forms in a quoted URL. The CLI no longer
-  guesses credentials from header formats, and a configured value too short to be a real
-  credential is ignored, rather than masked everywhere it appears in the logs.
-- Error text from a response or a failed connection is scrubbed of credentials before it
-  is truncated or logged, and so are the response headers the report records.
-- An error body is read as UTF-8, whatever charset the response declares or the HTTP
-  client guesses, so a legacy charset can't alter an echoed credential and slip it past
-  the redaction. A credential echoed in a UTF-16 or UTF-32 body isn't redacted.
-- A credential echoed in a JSON body is redacted however the encoder escaped its
-  characters. One escaped twice, as in JSON nested inside a JSON string, isn't.
+- A credential echoed in a response header is redacted in the report too
+  (`sanity.headers` and `ratelimit_headers.raw`), not only in the logs.
+- An error message cut at its 200-character limit no longer keeps part of a credential.
+- An echoed credential is redacted even when the response's charset or a JSON encoder
+  altered it, unless it was JSON-escaped twice, as in JSON nested inside a JSON string.
+- A credential echoed in a UTF-16 or UTF-32 body is no longer redacted. 0.1.0 redacted it
+  when the response declared that charset.
 
 ## [0.1.0] - 2026-07-02
 
@@ -99,5 +84,6 @@ Initial release.
 - Redaction of configured credentials from log output.
 - Docker image and PyPI packaging.
 
-[Unreleased]: https://github.com/Jartan-LLC/sonde/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Jartan-LLC/sonde/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Jartan-LLC/sonde/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jartan-LLC/sonde/releases/tag/v0.1.0
