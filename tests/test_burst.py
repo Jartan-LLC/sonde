@@ -36,11 +36,10 @@ def test_burst_all_success(no_wait: None, burst_transport: Callable[[Handler], N
             recovery_polls=3,
         ),
     )
-    assert [r["burst_size"] for r in results] == [10, 20]
-    assert all(r["ok_200"] == r["burst_size"] for r in results)
-    assert all(r["throttled_429"] == 0 for r in results)
+    assert [r.burst_size for r in results] == [10, 20]
+    assert all(r.ok_200 == r.burst_size for r in results)
+    assert all(r.throttled_429 == 0 for r in results)
     assert mw is None  # nothing throttled -> no window measured
-    assert all("launch_spread_ms" in r for r in results)
 
 
 def test_burst_counts_throttles(no_wait: None, burst_transport: Callable[[Handler], None]):
@@ -63,8 +62,8 @@ def test_burst_counts_throttles(no_wait: None, burst_transport: Callable[[Handle
             recovery_polls=2,
         ),
     )
-    assert results[0]["ok_200"] == 5
-    assert results[0]["throttled_429"] == 5
+    assert results[0].ok_200 == 5
+    assert results[0].throttled_429 == 5
 
 
 def test_burst_uses_retry_after_as_window(
@@ -84,7 +83,7 @@ def test_burst_uses_retry_after_as_window(
             recovery_polls=5,
         ),
     )
-    assert results[0]["throttled_429"] == 10
+    assert results[0].throttled_429 == 10
     assert mw == 7.0
 
 
@@ -109,7 +108,7 @@ def test_burst_measures_recovery_window(no_wait: None, burst_transport: Callable
             recovery_polls=5,
         ),
     )
-    assert results[0]["throttled_429"] == 10
+    assert results[0].throttled_429 == 10
     assert mw == pytest.approx(0.516, abs=1e-6)  # cumulative wait at 3rd recovery poll
 
 
@@ -157,7 +156,7 @@ def test_burst_budget_exhausted_during_recovery(
             recovery_polls=5,
         ),
     )
-    assert results[0]["throttled_429"] == 10
+    assert results[0].throttled_429 == 10
     assert mw is None  # recovery bailed on the exhausted budget -> no window
     assert calls["n"] == 10  # recovery afetch stopped at budget.take, before the handler
 
@@ -186,9 +185,9 @@ def test_burst_measures_window_once_across_bursts(
             recovery_polls=5,
         ),
     )
-    assert results[0]["throttled_429"] == 10
-    assert results[1]["throttled_429"] == 20
-    assert results[1]["max_retry_after"] == 99.0  # second burst really saw the larger value
+    assert results[0].throttled_429 == 10
+    assert results[1].throttled_429 == 20
+    assert results[1].max_retry_after == 99.0  # second burst really saw the larger value
     assert mw == 7.0  # ...but the measured window stays the first burst's, not overwritten
 
 

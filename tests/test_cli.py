@@ -136,9 +136,77 @@ def test_run_headerless_runs_sweep(
         "500",
     )
     report = cli.run(args)
+    assert report["ratelimit_headers"] == {}
     assert report["swept_floor_interval_s"] == 0.05
     assert report["estimate"]["header_limit"] is None
     assert "measured floor" in report["estimate"]["safe_rate_basis"]
+
+
+def test_run_report_shape(clock: FakeClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Report consumers read these keys; every section is filled here.
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    args, out = _args(tmp_path, "--force-sweep", "--sweep-intervals", "0.2", "--sweep-count", "5")
+    cli.run(args)
+    report = json.loads(out.read_text())
+    assert list(report) == [
+        "endpoint",
+        "provider",
+        "sanity",
+        "ratelimit_headers",
+        "sequential",
+        "burst",
+        "measured_window_seconds",
+        "sweep",
+        "swept_floor_interval_s",
+        "estimate",
+        "requests_used",
+    ]
+    assert list(report["sanity"]) == ["status", "rclass", "items", "headers"]
+    assert list(report["ratelimit_headers"]) == [
+        "limit",
+        "window_s",
+        "remaining",
+        "reset_s",
+        "policies",
+        "raw",
+    ]
+    assert report["ratelimit_headers"]["policies"] == [
+        [420, None],
+        [420, 60],
+        [420, 60],
+        [70000, None],
+    ]
+    assert list(report["sequential"]) == [
+        "successful_before_429",
+        "first_429_at_request",
+        "wall_seconds",
+        "seq_req_per_sec",
+        "avg_latency_ms",
+        "retry_after",
+    ]
+    assert [list(row) for row in report["burst"]] == 2 * [
+        [
+            "burst_size",
+            "ok_200",
+            "throttled_429",
+            "other",
+            "wall_seconds",
+            "launch_spread_ms",
+            "max_retry_after",
+        ]
+    ]
+    assert [list(row) for row in report["sweep"]] == [
+        [
+            "interval_s",
+            "drain_requests",
+            "bucket_emptied",
+            "requests",
+            "throttled_429",
+            "throttle_frac",
+            "clean",
+            "effective_req_per_s",
+        ]
+    ]
 
 
 def test_run_aborts_on_non_200(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

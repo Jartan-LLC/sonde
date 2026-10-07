@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -12,16 +13,40 @@ from typing import Any
 from sonde import core
 from sonde.core import Result
 from sonde.phases.probe import Probe
-from sonde.provider import has_authoritative_limit
+from sonde.provider import RateLimit, authoritative_limit
 
 logger = logging.getLogger(__name__)
 
 
-def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
+@dataclass(frozen=True)
+class SequentialSummary:
+    """What the sequential phase measured.
+
+    Attributes:
+        successful_before_429: Successful requests before the first throttle, or in all
+            when nothing throttled.
+        first_429_at_request: The first throttled request's number, counting from 1, or
+            None when nothing throttled.
+        wall_seconds: The phase's wall time.
+        seq_req_per_sec: Successful requests per second, or None when no time passed.
+        avg_latency_ms: The successful requests' mean latency, or None without one.
+        retry_after: The last response's Retry-After in seconds, when it sent one.
+    """
+
+    successful_before_429: int
+    first_429_at_request: int | None
+    wall_seconds: float
+    seq_req_per_sec: float | None
+    avg_latency_ms: float | None
+    retry_after: float | None
+
+
+def phase_sanity(probe: Probe) -> tuple[Result, RateLimit | None]:
     """Send one request and log what it shows about auth and rate limits.
 
     Returns:
-        The request's result, and the provider's parse of its rate-limit headers.
+        The request's result, and the provider's parse of its rate-limit headers (None
+        when it sent none).
     """
     logger.info("\n== PHASE: sanity / auth ==")
     endpoint = probe.endpoint
@@ -52,36 +77,30 @@ def phase_sanity(probe: Probe) -> tuple[Result, dict[str, Any]]:
         logger.debug("  headers: %s", json.dumps(r.headers))
 
     rl = endpoint.provider().parse_rate_limit(r.headers)
-    if has_authoritative_limit(rl):
-        logger.info(
-            "  >> RATE LIMIT (headers, authoritative): %s per %ss window",
-            rl["limit"],
-            rl["window_s"],
-        )
-        if rl.get("remaining") is not None:
-            logger.info(
-                "     live: remaining=%s  resets_in=%ss",
-                rl["remaining"],
-                rl.get("reset_s"),
-            )
-        extra = [(c, w) for c, w in rl.get("policies", []) if w != rl["window_s"]]
+    stated = authoritative_limit(rl)
+    if rl is None or not rl.limit:
+        logger.info("  >> no usable rate-limit headers (will fall back to empirical sweep).")
+    elif stated is not None:
+        limit, window = stated
+        logger.info("  >> RATE LIMIT (headers, authoritative): %s per %ss window", limit, window)
+        if rl.remaining is not None:
+            logger.info("     live: remaining=%s  resets_in=%ss", rl.remaining, rl.reset_s)
+        extra = [(c, w) for c, w in rl.policies if w != window]
         if extra:
             logger.info("     other quota(s): %s", extra)
-    elif rl.get("limit"):
+    else:
         logger.info(
             "  >> rate-limit headers present but no window: limit=%s, "
             "remaining=%s, resets_in=%ss "
             "(will fall back to the sweep for the rate estimate).",
-            rl["limit"],
-            rl.get("remaining"),
-            rl.get("reset_s"),
+            rl.limit,
+            rl.remaining,
+            rl.reset_s,
         )
-    else:
-        logger.info("  >> no usable rate-limit headers (will fall back to empirical sweep).")
     return r, rl
 
 
-def phase_seq(probe: Probe, cap: int) -> tuple[dict[str, Any], list[Any]]:
+def phase_seq(probe: Probe, cap: int) -> tuple[SequentialSummary, list[Any]]:
     """Send back-to-back requests until the first throttle, error, empty budget, or `cap`.
 
     Returns:
@@ -140,11 +159,12 @@ def phase_seq(probe: Probe, cap: int) -> tuple[dict[str, Any], list[Any]]:
             el,
             rate,
         )
-    return {
-        "successful_before_429": ok,
-        "first_429_at_request": first_429,
-        "wall_seconds": round(el, 3),
-        "seq_req_per_sec": round(ok / el, 2) if el > 0 else None,
-        "avg_latency_ms": round(avg * 1000, 1) if avg is not None else None,
-        "retry_after": last.retry_after if last else None,
-    }, cursor_pool
+    summary = SequentialSummary(
+        successful_before_429=ok,
+        first_429_at_request=first_429,
+        wall_seconds=round(el, 3),
+        seq_req_per_sec=round(ok / el, 2) if el > 0 else None,
+        avg_latency_ms=round(avg * 1000, 1) if avg is not None else None,
+        retry_after=last.retry_after if last else None,
+    )
+    return summary, cursor_pool

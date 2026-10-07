@@ -14,13 +14,14 @@ import json
 import logging
 import sys
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, quote_plus
 
 from sonde import core, endpoint, phases
 from sonde.logconfig import register_log_secrets, setup_logging
-from sonde.provider import has_authoritative_limit
+from sonde.provider import RateLimit, authoritative_limit
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "items": sanity.count,
         "headers": sanity.headers,
     }
-    report["ratelimit_headers"] = rl
+    report["ratelimit_headers"] = asdict(rl) if rl is not None else {}
     if sanity.rclass != core.RClass.OK:
         logger.warning(
             "\nAborting: no usable success response from the endpoint. "
@@ -234,45 +235,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         _dump(args.output, report)
         return report
-    measured = phases.Measurements(page_count=sanity.count, rate_limit=rl)
 
-    measured.seq_summary, cursor_pool = phases.phase_seq(probe, args.seq_cap)
-    report["sequential"] = measured.seq_summary
+    seq_summary, cursor_pool = phases.phase_seq(probe, args.seq_cap)
+    report["sequential"] = asdict(seq_summary)
 
-    if not args.skip_burst:
-        burst = phases.BurstConfig(
-            sizes=tuple(args.burst_sizes),
-            cooldown=args.burst_cooldown,
-            recovery_step=args.recovery_step,
-            recovery_max=args.recovery_max,
-            recovery_polls=args.recovery_polls,
-        )
-        measured.burst_results, measured.measured_window = phases.phase_burst(
-            probe, cursor_pool, burst
-        )
-    report["burst"] = measured.burst_results
-    report["measured_window_seconds"] = measured.measured_window
+    burst_rows, measured_window = _burst(args, probe, cursor_pool)
+    report["burst"] = [asdict(row) for row in burst_rows]
+    report["measured_window_seconds"] = measured_window
 
-    sweep_rows: list[dict[str, Any]] = []
-    headers_authoritative = has_authoritative_limit(rl)
-    run_sweep = (not args.skip_sweep) and (args.force_sweep or not headers_authoritative)
-    if run_sweep:
-        sweep = phases.SweepConfig(
-            intervals=tuple(sorted(args.sweep_intervals, reverse=True)),
-            probe_count=args.sweep_count,
-            drain_cap=args.sweep_drain,
-            tolerance=args.sweep_tolerance,
-        )
-        measured.swept_interval, sweep_rows = phases.phase_sweep(probe, cursor_pool, sweep)
-    elif headers_authoritative and not args.skip_sweep:
-        logger.info("\n== PHASE: sustained-interval sweep ==")
-        logger.info(
-            "  skipped: authoritative rate-limit headers already give the limit. "
-            "Use --force-sweep to run it anyway as an independent check."
-        )
-    report["sweep"] = sweep_rows
-    report["swept_floor_interval_s"] = measured.swept_interval
+    swept_interval, sweep_rows = _sweep(args, probe, cursor_pool, rl)
+    report["sweep"] = [asdict(row) for row in sweep_rows]
+    report["swept_floor_interval_s"] = swept_interval
 
+    measured = phases.Measurements(
+        page_count=sanity.count,
+        rate_limit=rl,
+        seq_summary=seq_summary,
+        burst_results=burst_rows,
+        measured_window=measured_window,
+        swept_interval=swept_interval,
+    )
     report["estimate"] = phases.phase_estimate(ep, measured, args.margin)
     report["requests_used"] = budget.used
 
@@ -281,6 +263,52 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.output != "-":
         logger.info("Full report written to: %s", args.output)
     return report
+
+
+def _burst(
+    args: argparse.Namespace, probe: phases.Probe, cursor_pool: list[Any]
+) -> tuple[list[phases.BurstRow], float | None]:
+    """Run the burst phase unless `--skip-burst`; return its rows and measured window."""
+    if args.skip_burst:
+        return [], None
+    config = phases.BurstConfig(
+        sizes=tuple(args.burst_sizes),
+        cooldown=args.burst_cooldown,
+        recovery_step=args.recovery_step,
+        recovery_max=args.recovery_max,
+        recovery_polls=args.recovery_polls,
+    )
+    return phases.phase_burst(probe, cursor_pool, config)
+
+
+def _sweep(
+    args: argparse.Namespace,
+    probe: phases.Probe,
+    cursor_pool: list[Any],
+    rate_limit: RateLimit | None,
+) -> tuple[float | None, list[phases.SweepRow]]:
+    """Run the sweep when no authoritative headers make it redundant, or when forced.
+
+    Returns:
+        The fastest clean interval (None if none was found or the sweep didn't run),
+        and its rows.
+    """
+    if args.skip_sweep:
+        return None, []
+    if authoritative_limit(rate_limit) is not None and not args.force_sweep:
+        logger.info("\n== PHASE: sustained-interval sweep ==")
+        logger.info(
+            "  skipped: authoritative rate-limit headers already give the limit. "
+            "Use --force-sweep to run it anyway as an independent check."
+        )
+        return None, []
+    config = phases.SweepConfig(
+        intervals=tuple(sorted(args.sweep_intervals, reverse=True)),
+        probe_count=args.sweep_count,
+        drain_cap=args.sweep_drain,
+        tolerance=args.sweep_tolerance,
+    )
+    return phases.phase_sweep(probe, cursor_pool, config)
 
 
 def _preflight_output(path: str) -> None:

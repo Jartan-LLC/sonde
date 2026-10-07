@@ -36,9 +36,34 @@ class SweepConfig:
     tolerance: float
 
 
+@dataclass(frozen=True)
+class SweepRow:
+    """One interval's outcome.
+
+    Attributes:
+        interval_s: The interval tried, in seconds.
+        drain_requests: The requests the drain sent before the bucket emptied.
+        bucket_emptied: Always True: an interval whose drain fails gets no row.
+        requests: The paced requests sent.
+        throttled_429: The paced requests throttled.
+        throttle_frac: The fraction of paced requests throttled.
+        clean: Whether that fraction is within the tolerance.
+        effective_req_per_s: The paced requests' achieved rate.
+    """
+
+    interval_s: float
+    drain_requests: int
+    bucket_emptied: bool
+    requests: int
+    throttled_429: int
+    throttle_frac: float
+    clean: bool
+    effective_req_per_s: float
+
+
 def phase_sweep(
     probe: Probe, cursor_pool: list[Any], config: SweepConfig
-) -> tuple[float | None, list[dict[str, Any]]]:
+) -> tuple[float | None, list[SweepRow]]:
     """Find the fastest inter-request interval that stays 429-free at STEADY STATE.
 
     Drains the bucket first (rapid requests until empty), then paces
@@ -58,7 +83,7 @@ def phase_sweep(
         config.probe_count,
     )
 
-    rows: list[dict[str, Any]] = []
+    rows: list[SweepRow] = []
     fastest_safe = None
     cursors = cursor_cycle(cursor_pool)
 
@@ -94,16 +119,16 @@ def phase_sweep(
         clean = frac <= config.tolerance
 
         rows.append(
-            {
-                "interval_s": interval,
-                "drain_requests": drained_reqs,
-                "bucket_emptied": True,
-                "requests": sent,
-                "throttled_429": throttled,
-                "throttle_frac": round(frac, 3),
-                "clean": clean,
-                "effective_req_per_s": round(eff_rate, 2),
-            }
+            SweepRow(
+                interval_s=interval,
+                drain_requests=drained_reqs,
+                bucket_emptied=True,
+                requests=sent,
+                throttled_429=throttled,
+                throttle_frac=round(frac, 3),
+                clean=clean,
+                effective_req_per_s=round(eff_rate, 2),
+            )
         )
         status = "clean" if clean else f"THROTTLED ({throttled}/{sent}={frac:.0%})"
         logger.info(
@@ -127,7 +152,7 @@ def phase_sweep(
             )
             break
 
-    if fastest_safe is not None and rows and rows[-1]["clean"]:
+    if fastest_safe is not None and rows and rows[-1].clean:
         logger.info(
             "  => reached fastest tested interval (%ss) still clean; "
             "true floor may be lower — add faster values to --sweep-intervals.",

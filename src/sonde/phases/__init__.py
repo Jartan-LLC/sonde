@@ -15,17 +15,20 @@ endpoint. The phases, by module:
 `probe` holds what the probing phases share.
 """
 
-from sonde.phases.burst import BurstConfig, phase_burst
+from sonde.phases.burst import BurstConfig, BurstRow, phase_burst
 from sonde.phases.estimate import Measurements, phase_estimate
 from sonde.phases.probe import Probe
-from sonde.phases.sequential import phase_sanity, phase_seq
-from sonde.phases.sweep import SweepConfig, phase_sweep
+from sonde.phases.sequential import SequentialSummary, phase_sanity, phase_seq
+from sonde.phases.sweep import SweepConfig, SweepRow, phase_sweep
 
 __all__ = [
     "BurstConfig",
+    "BurstRow",
     "Measurements",
     "Probe",
+    "SequentialSummary",
     "SweepConfig",
+    "SweepRow",
     "phase_burst",
     "phase_estimate",
     "phase_sanity",
