@@ -170,7 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="endpoint", required=True, metavar="ENDPOINT")
     for name, cls in sorted(endpoint.all_endpoints().items()):
         sp = sub.add_parser(name, parents=[common], help=cls.help, description=cls.help)
-        cls.add_arguments(sp)
+        try:
+            cls.add_arguments(sp)
+        except Exception as e:  # a plugin's own code can fail in any way
+            raise endpoint.PluginError(f"endpoint {name!r} failed to add its arguments: {e}") from e
     return p
 
 

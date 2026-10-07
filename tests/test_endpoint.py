@@ -1,8 +1,10 @@
 """Tests for the Endpoint interface, registry, and the asset-owners implementation."""
 
 import argparse
+import sys
 from collections.abc import Callable, Iterator
 from importlib.metadata import EntryPoint
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -113,6 +115,18 @@ class ClashingEndpoint(FakeEndpoint):
     name = "asset-owners"
 
 
+class UnnamedEndpoint(FakeEndpoint):
+    name = ""
+
+
+class ArgumentClashEndpoint(FakeEndpoint):
+    name = "argument-clash"
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--output")
+
+
 type Install = Callable[..., None]
 
 
@@ -149,13 +163,44 @@ def test_plugin_already_registered_by_its_decorator_is_accepted(install_plugins:
     [
         ("tests.no_such_module:Endpoint", "'plugin0' .* failed to load"),
         ("tests.helpers:make_probe", "'plugin0' .* is not an Endpoint subclass"),
+        ("tests.helpers:FakeClock", "'plugin0' .* is not an Endpoint subclass"),
         ("tests.test_endpoint:ClashingEndpoint", "'plugin0' .*duplicate endpoint name"),
+        ("tests.test_endpoint:UnnamedEndpoint", "'plugin0' .*must set a unique `name`"),
     ],
 )
 def test_broken_plugin_raises_naming_it(install_plugins: Install, value: str, error: str):
     install_plugins(value)
     with pytest.raises(PluginError, match=error):
         endpoint.all_endpoints()
+
+
+def test_plugin_that_raises_while_importing_is_named(
+    install_plugins: Install, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    (tmp_path / "crashing_plugin.py").write_text('raise RuntimeError("plugin crashed")\n')
+    monkeypatch.setattr(sys, "path", [str(tmp_path), *sys.path])
+    install_plugins("crashing_plugin:Endpoint")
+    with pytest.raises(PluginError, match=r"'plugin0' .* failed to load: plugin crashed"):
+        endpoint.all_endpoints()
+
+
+def test_failed_plugin_load_leaves_the_registry_unchanged(install_plugins: Install):
+    before = dict(endpoint._REGISTRY)
+    install_plugins("tests.helpers:FakeEndpoint", "tests.helpers:make_probe")
+    for _ in range(2):  # a retry reports the same error, not a duplicate name
+        with pytest.raises(PluginError, match="is not an Endpoint subclass"):
+            endpoint.all_endpoints()
+        assert before == endpoint._REGISTRY
+
+
+def test_cli_exits_2_when_a_plugin_s_arguments_clash(
+    install_plugins: Install, capsys: pytest.CaptureFixture[str]
+):
+    install_plugins("tests.test_endpoint:ArgumentClashEndpoint")
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["--help"])
+    assert exit_info.value.code == 2
+    assert "endpoint 'argument-clash' failed to add its arguments" in capsys.readouterr().err
 
 
 def test_cli_exits_2_on_a_broken_plugin(

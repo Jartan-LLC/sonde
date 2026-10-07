@@ -1,7 +1,7 @@
 """The pluggable Endpoint interface.
 
-To test a new API endpoint you implement ONE subclass of `Endpoint` and register
-it. The generic probing engine (`sonde.phases`) drives everything else. A subclass
+To test a new API endpoint you implement ONE subclass of `Endpoint` and make it
+known to sonde. The generic probing engine (`sonde.phases`) drives everything else. A subclass
 answers three questions:
 
 - `build_request(cursor) -> RequestSpec`: how to form the request for a paging
@@ -138,7 +138,6 @@ class PluginError(Exception):
     """An installed package's endpoint entry point couldn't be loaded or registered."""
 
 
-# The entry-point group a package declares its endpoints under.
 _PLUGIN_GROUP = "sonde.endpoints"
 
 
@@ -146,10 +145,22 @@ _PLUGIN_GROUP = "sonde.endpoints"
 def _load_plugins() -> None:
     """Register the endpoint each installed package declares under `_PLUGIN_GROUP`.
 
+    On failure the registry is left as it was, so a retry reports the same error.
+
     Raises:
         PluginError: An entry point fails to load, isn't an `Endpoint` subclass, or
             its `name` is unset or taken.
     """
+    before = dict(_REGISTRY)
+    try:
+        _register_plugins()
+    except PluginError:
+        _REGISTRY.clear()
+        _REGISTRY.update(before)
+        raise
+
+
+def _register_plugins() -> None:
     for ep in entry_points(group=_PLUGIN_GROUP):
         where = f"entry point {ep.name!r} ({ep.value})"
         try:
@@ -179,7 +190,7 @@ def get(name: str) -> type[Endpoint] | None:
 
 
 def all_endpoints() -> dict[str, type[Endpoint]]:
-    """Return every registered endpoint, built-in or imported, by name."""
+    """Return every registered endpoint, built-in or from an installed package, by name."""
     return dict(_loaded_registry())
 
 

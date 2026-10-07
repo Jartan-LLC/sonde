@@ -47,7 +47,7 @@ class PluginProbe(Endpoint):
 """
 
 
-def test_cli_runs_an_endpoint_from_an_installed_package(tmp_path: Path):
+def test_cli_offers_an_endpoint_from_an_installed_package(tmp_path: Path):
     (tmp_path / "plugin_probe.py").write_text(_PLUGIN_MODULE)
     dist_info = tmp_path / "plugin_probe-0.1.dist-info"
     dist_info.mkdir()
@@ -55,7 +55,8 @@ def test_cli_runs_an_endpoint_from_an_installed_package(tmp_path: Path):
     (dist_info / "entry_points.txt").write_text(
         "[sonde.endpoints]\nplugin-probe = plugin_probe:PluginProbe\n"
     )
-    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    # Prepended to this process's path, so the child imports the sonde under test.
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(tmp_path), *sys.path])}
 
     def sonde(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - the arguments are this test's literals
