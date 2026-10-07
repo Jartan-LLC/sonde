@@ -76,8 +76,10 @@ class GitHubStargazersEndpoint(Endpoint):
     @override
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--owner", required=True, help="repo owner/org, e.g. 'anthropics'")
-        parser.add_argument("--repo", required=True, help="repo name, e.g. 'anthropic-sdk-python'")
+        parser.add_argument(
+            "--owner", required=True, help="repository owner or organization, e.g. 'Jartan-LLC'"
+        )
+        parser.add_argument("--repo", required=True, help="repository name, e.g. 'sonde'")
         add_pagination_args(parser, page_max=cls.MAX_PAGE)
 
     @override
