@@ -178,6 +178,7 @@ jobs:
           persist-credentials: false
       - run: docker build -t sonde:ci .
       - run: docker run --rm sonde:ci asset-owners --help
+      - run: docker run --rm --entrypoint sh sonde:ci -c '! command -v uv'
 
   changes:
     runs-on: ubuntu-24.04

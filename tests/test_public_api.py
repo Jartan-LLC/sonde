@@ -5,12 +5,9 @@ while breaking `from sonde import ...` in the docs — this locks it.
 """
 
 import sonde
-from sonde import Endpoint, PageResult, Provider, RequestSpec, register
 
 
 def test_public_api_reexported():
-    for obj in (Endpoint, RequestSpec, PageResult, register, Provider):
-        assert obj is not None
     assert set(sonde.__all__) >= {
         "__version__",
         "Endpoint",
@@ -18,4 +15,9 @@ def test_public_api_reexported():
         "PageResult",
         "register",
         "Provider",
+        "RClass",
+        "RateLimit",
+        "GitHubProvider",
+        "RobloxProvider",
     }
+    assert all(hasattr(sonde, name) for name in sonde.__all__)

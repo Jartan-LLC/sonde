@@ -13,6 +13,7 @@ from sonde.logconfig import (
     JsonFormatter,
     PlainFormatter,
     register_log_secrets,
+    scrub,
     setup_logging,
 )
 
@@ -240,6 +241,42 @@ class TestSecretRedaction:
     def test_values_too_short_to_be_credentials_are_ignored(self):
         register_log_secrets(["", "x", "realsecret"])
         assert logconfig._SECRETS == ["realsecret"]
+
+    @pytest.mark.parametrize(
+        ("secret", "echo"),
+        [
+            ("abc/defGHIJ", r"abc\/defGHIJ"),
+            ('tok"en12345', r"tok\"en12345"),
+            ("abc\\defghij", r"abc\\defghij"),
+            ("abc\tdefghij", r"abc\tdefghij"),
+            ("abc\bdefgh", r"abc\bdefgh"),
+            ("abc\fdefgh", r"abc\fdefgh"),
+            ("abc\ndefgh", r"abc\ndefgh"),
+            ("abc\rdefgh", r"abc\rdefgh"),
+            ("abcdefgh\\", r"abcdefgh\\"),  # a trailing backslash
+            ("abc\tdefghij", r"abc\u0009defghij"),
+            ("tökenvalue", r"t\u00f6kenvalue"),
+            ("tökenvalue", r"t\u00F6kenvalue"),
+            ('tök"envalue', r"tök\"envalue"),  # JSON.stringify keeps non-ASCII as is
+            ("abc&defghij", r"abc\u0026defghij"),  # Go escapes & < >
+            ("abcdefgh", r"\u0061\u0062\u0063\u0064\u0065\u0066\u0067\u0068"),
+            ("tok😀envalue", r"tok\ud83d\ude00envalue"),
+        ],
+    )
+    def test_json_escaped_echo_is_redacted(self, secret: str, echo: str):
+        register_log_secrets([secret])
+        assert scrub(f'{{"error": "bad {echo}"}}') == '{"error": "bad ***"}'
+
+    def test_secret_with_a_lone_surrogate_is_redacted(self):
+        # os.environ decodes a non-UTF-8 byte to a lone surrogate.
+        secret = "abcd" + chr(0xDC80) + "efgh"
+        register_log_secrets([secret])
+        assert scrub(f"tok {secret}") == "tok ***"
+        assert scrub(f"tok {json.dumps(secret)[1:-1]}") == "tok ***"
+
+    def test_letters_match_only_in_their_own_case(self):
+        register_log_secrets(["abcdefghij"])
+        assert scrub("ABCDEFGHIJ abcdefghij") == "ABCDEFGHIJ ***"
 
     def test_longer_secret_is_redacted_whole(self):
         register_log_secrets(["abcdefgh", "abcdefgh12345"])
