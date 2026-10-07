@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python 3.14 support.
 - Endpoints from installed packages: a package that declares an `Endpoint` subclass under
-  the `sonde.endpoints` entry-point group adds a `sonde` subcommand.
+  the `sonde.endpoints` entry-point group adds a `sonde` subcommand. A plugin that won't
+  load stops the CLI with exit code 2 and names its entry point.
 - `RClass`, `RateLimit`, `GitHubProvider` and `RobloxProvider` are importable from `sonde`.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
 - `core.parse_response`, `core.request_args`, `logconfig.scrub` and

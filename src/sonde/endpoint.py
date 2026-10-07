@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import functools
 import importlib
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
@@ -148,8 +149,8 @@ def _load_plugins() -> None:
     On failure the registry is left as it was, so a retry reports the same error.
 
     Raises:
-        PluginError: An entry point fails to load, isn't an `Endpoint` subclass, or
-            its `name` is unset or taken.
+        PluginError: An entry point fails to load, isn't a concrete `Endpoint`
+            subclass, or its `name` is unset or taken.
     """
     before = dict(_REGISTRY)
     try:
@@ -169,6 +170,8 @@ def _register_plugins() -> None:
             raise PluginError(f"{where} failed to load: {e}") from e
         if not (isinstance(cls, type) and issubclass(cls, Endpoint)):
             raise PluginError(f"{where} is not an Endpoint subclass")
+        if inspect.isabstract(cls):
+            raise PluginError(f"{where} is abstract: it doesn't implement every Endpoint method")
         if _REGISTRY.get(cls.name) is cls:  # already registered with @register
             continue
         try:

@@ -173,7 +173,10 @@ def build_parser() -> argparse.ArgumentParser:
         try:
             cls.add_arguments(sp)
         except Exception as e:  # a plugin's own code can fail in any way
-            raise endpoint.PluginError(f"endpoint {name!r} failed to add its arguments: {e}") from e
+            where = f"{cls.__module__}.{cls.__qualname__}"
+            raise endpoint.PluginError(
+                f"endpoint {name!r} ({where}) failed to add its arguments: {e}"
+            ) from e
     return p
 
 

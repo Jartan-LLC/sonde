@@ -108,7 +108,7 @@ Write the endpoint in your own package. Once the package is installed alongside 
 1. Subclass `Endpoint`, set a unique `name` (the subcommand) and a one-line `help`, and implement `build_request(cursor)` and `parse_page(response)`.
 2. Override `make_provider()` to return the API's `Provider`: the generic one handles standard 200/429 and IETF headers, and `GitHubProvider` and `RobloxProvider` are built in. A provider that sends credentials in headers lists them in `credentials()`, so logs redact them; query-parameter credentials go in its `auth_params()`, not in an endpoint's request parameters.
 3. Optionally implement `total_items()` for scrape-time estimates, `add_arguments()` / `from_args()` for CLI options, and `extra_headers()` for endpoint-specific headers.
-4. If the endpoint is paginated, call `add_pagination_args(parser, page_max=cls.MAX_PAGE)` in `add_arguments()` and `pagination_from_args(args, page_max=cls.MAX_PAGE)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags (clamped to your endpoint's cap).
+4. If the endpoint is paginated, call `add_pagination_args(parser, page_max=...)` in `add_arguments()` and `pagination_from_args(args, page_max=...)` in `from_args()`, with the API's largest page size, so it gets the shared `--page-size` / `--total-items` flags (clamped to that size).
 5. Declare the class in your package's `pyproject.toml`:
 
    ```toml
@@ -170,7 +170,7 @@ Common options shared by all endpoints:
 
 `-v` and `-q` are mutually exclusive. Logs always go to stderr; the report goes to `--output`.
 
-**Exit codes:** `0` success, `2` precondition failure (bad arguments, unwritable `--output`, or the endpoint returned no usable response), `1` unexpected crash, `130` interrupted.
+**Exit codes:** `0` success, `2` precondition failure (bad arguments, an endpoint plugin that won't load, unwritable `--output`, or the endpoint returned no usable response), `1` unexpected crash, `130` interrupted.
 
 ### Piping and machine-readable output
 

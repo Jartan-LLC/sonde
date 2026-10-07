@@ -164,6 +164,7 @@ def test_plugin_already_registered_by_its_decorator_is_accepted(install_plugins:
         ("tests.no_such_module:Endpoint", "'plugin0' .* failed to load"),
         ("tests.helpers:make_probe", "'plugin0' .* is not an Endpoint subclass"),
         ("tests.helpers:FakeClock", "'plugin0' .* is not an Endpoint subclass"),
+        ("sonde.endpoint:Endpoint", "'plugin0' .* is abstract"),
         ("tests.test_endpoint:ClashingEndpoint", "'plugin0' .*duplicate endpoint name"),
         ("tests.test_endpoint:UnnamedEndpoint", "'plugin0' .*must set a unique `name`"),
     ],
@@ -200,7 +201,8 @@ def test_cli_exits_2_when_a_plugin_s_arguments_clash(
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["--help"])
     assert exit_info.value.code == 2
-    assert "endpoint 'argument-clash' failed to add its arguments" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "endpoint 'argument-clash' (tests.test_endpoint.ArgumentClashEndpoint)" in err
 
 
 def test_cli_exits_2_on_a_broken_plugin(
