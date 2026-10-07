@@ -103,23 +103,29 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 
 ## Adding an Endpoint
 
-1. Create a new module in `src/sonde/endpoints/`.
-2. Subclass `Endpoint` and implement `build_request(cursor)` and `parse_page(response)`.
-3. Decorate with `@register` and set a unique `name` (becomes the CLI subcommand).
-4. Override `_make_provider()` to return the appropriate `Provider` (or use the generic one for standard 200/429 + IETF headers). A provider that sends credentials in headers lists them in `credentials()`, so logs redact them; query-parameter credentials go in its `auth_params()`, not in an endpoint's request parameters.
-5. Optionally implement `total_items()` for scrape-time estimates, `add_arguments()` / `from_args()` for CLI options, and `extra_headers()` for endpoint-specific headers.
-6. If the endpoint is paginated, call `add_pagination_args(parser, page_max=cls.MAX_PAGE)` in `add_arguments()` and `pagination_from_args(args, page_max=cls.MAX_PAGE)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags (clamped to your endpoint's cap).
-7. Import the new module in `src/sonde/endpoints/__init__.py` so it registers on package load.
+Write the endpoint in your own package. Once the package is installed alongside sonde, the endpoint is a `sonde` subcommand.
+
+1. Subclass `Endpoint`, set a unique `name` (the subcommand) and a one-line `help`, and implement `build_request(cursor)` and `parse_page(response)`.
+2. Override `make_provider()` to return the API's `Provider`: the generic one handles standard 200/429 and IETF headers, and `GitHubProvider` and `RobloxProvider` are built in. A provider that sends credentials in headers lists them in `credentials()`, so logs redact them; query-parameter credentials go in its `auth_params()`, not in an endpoint's request parameters.
+3. Optionally implement `total_items()` for scrape-time estimates, `add_arguments()` / `from_args()` for CLI options, and `extra_headers()` for endpoint-specific headers.
+4. If the endpoint is paginated, call `add_pagination_args(parser, page_max=cls.MAX_PAGE)` in `add_arguments()` and `pagination_from_args(args, page_max=cls.MAX_PAGE)` in `from_args()` so it gets the shared `--page-size` / `--total-items` flags (clamped to your endpoint's cap).
+5. Declare the class in your package's `pyproject.toml`:
+
+   ```toml
+   [project.entry-points."sonde.endpoints"]
+   my-endpoint = "my_package.endpoints:MyEndpoint"
+   ```
+
+Import what you need from `sonde`; its other modules are internal. While sonde is 0.x, a minor release can change the names `sonde` exports, and the changelog says how.
 
 Minimal example:
 
 ```python
 from typing import Any, override
 
-from sonde import Endpoint, PageResult, RequestSpec, register
+from sonde import Endpoint, PageResult, RequestSpec
 
 
-@register
 class MyEndpoint(Endpoint):
     name = "my-endpoint"
     help = "one-line description for --help"
@@ -133,6 +139,8 @@ class MyEndpoint(Endpoint):
         data = response.json()
         return PageResult(count=len(data["items"]), next_cursor=data.get("next_page"))
 ```
+
+A built-in endpoint lives in `src/sonde/endpoints/` instead, decorated with `@register` and imported in that package's `__init__.py`.
 
 ## CLI Reference
 

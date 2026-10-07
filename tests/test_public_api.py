@@ -5,11 +5,31 @@ while breaking `from sonde import ...` in the docs — this locks it.
 """
 
 import sonde
-from sonde import Endpoint, PageResult, Provider, RequestSpec, register
+from sonde import (
+    Endpoint,
+    GitHubProvider,
+    PageResult,
+    Provider,
+    RateLimit,
+    RClass,
+    RequestSpec,
+    RobloxProvider,
+    register,
+)
 
 
 def test_public_api_reexported():
-    for obj in (Endpoint, RequestSpec, PageResult, register, Provider):
+    for obj in (
+        Endpoint,
+        RequestSpec,
+        PageResult,
+        register,
+        Provider,
+        RClass,
+        RateLimit,
+        GitHubProvider,
+        RobloxProvider,
+    ):
         assert obj is not None
     assert set(sonde.__all__) >= {
         "__version__",
@@ -18,4 +38,8 @@ def test_public_api_reexported():
         "PageResult",
         "register",
         "Provider",
+        "RClass",
+        "RateLimit",
+        "GitHubProvider",
+        "RobloxProvider",
     }

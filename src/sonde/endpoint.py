@@ -12,15 +12,18 @@ answers three questions:
   can estimate the scrape time.
 
 Plus optional CLI plumbing (add_arguments / from_args) and extra_headers().
+An installed package adds an endpoint under the `sonde.endpoints` entry-point group.
 See endpoints/asset_owners.py for a worked example, and the README.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from importlib.metadata import entry_points
 from typing import Any, Self
 
 from sonde.provider import Provider
@@ -28,6 +31,7 @@ from sonde.provider import Provider
 __all__ = [
     "Endpoint",
     "PageResult",
+    "PluginError",
     "RequestSpec",
     "add_pagination_args",
     "all_endpoints",
@@ -75,7 +79,7 @@ class Endpoint(ABC):
         """Build an instance from parsed CLI args."""
         return cls()
 
-    def _make_provider(self) -> Provider:
+    def make_provider(self) -> Provider:
         """Return the Provider for this endpoint's API.
 
         The default is the generic provider: 200/429, IETF headers, no auth. Override it
@@ -86,7 +90,7 @@ class Endpoint(ABC):
     def provider(self) -> Provider:
         """Return this endpoint's provider, the same instance on every call."""
         if self._provider_instance is None:
-            self._provider_instance = self._make_provider()
+            self._provider_instance = self.make_provider()
         return self._provider_instance
 
     @abstractmethod
@@ -130,9 +134,42 @@ def register[E: type[Endpoint]](cls: E) -> E:
     return cls
 
 
+class PluginError(Exception):
+    """An installed package's endpoint entry point couldn't be loaded or registered."""
+
+
+# The entry-point group a package declares its endpoints under.
+_PLUGIN_GROUP = "sonde.endpoints"
+
+
+@functools.cache
+def _load_plugins() -> None:
+    """Register the endpoint each installed package declares under `_PLUGIN_GROUP`.
+
+    Raises:
+        PluginError: An entry point fails to load, isn't an `Endpoint` subclass, or
+            its `name` is unset or taken.
+    """
+    for ep in entry_points(group=_PLUGIN_GROUP):
+        where = f"entry point {ep.name!r} ({ep.value})"
+        try:
+            cls = ep.load()
+        except Exception as e:  # a plugin can fail in any way while importing
+            raise PluginError(f"{where} failed to load: {e}") from e
+        if not (isinstance(cls, type) and issubclass(cls, Endpoint)):
+            raise PluginError(f"{where} is not an Endpoint subclass")
+        if _REGISTRY.get(cls.name) is cls:  # already registered with @register
+            continue
+        try:
+            register(cls)
+        except ValueError as e:
+            raise PluginError(f"{where}: {e}") from e
+
+
 def _loaded_registry() -> dict[str, type[Endpoint]]:
-    """Return the registry, once the built-in endpoints have registered themselves."""
+    """Return the registry, with the built-in and installed endpoints registered."""
     importlib.import_module("sonde.endpoints")
+    _load_plugins()
     return _REGISTRY
 
 

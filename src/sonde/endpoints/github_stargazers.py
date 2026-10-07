@@ -70,7 +70,7 @@ class GitHubStargazersEndpoint(Endpoint):
         self.page_size = min(page_size, self.MAX_PAGE)
 
     @override
-    def _make_provider(self) -> Provider:
+    def make_provider(self) -> Provider:
         return GitHubProvider()
 
     @override

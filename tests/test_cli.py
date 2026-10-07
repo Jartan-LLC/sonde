@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -26,6 +27,51 @@ def no_burst(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("the burst phase ran despite --skip-burst")
 
     monkeypatch.setattr(phases, "phase_burst", must_not_run)
+
+
+_PLUGIN_MODULE = """
+from typing import Any
+
+from sonde import Endpoint, PageResult, RequestSpec
+
+
+class PluginProbe(Endpoint):
+    name = "plugin-probe"
+    help = "an endpoint from an installed package"
+
+    def build_request(self, cursor: Any) -> RequestSpec:
+        return RequestSpec(url="https://example.test/items")
+
+    def parse_page(self, response: Any) -> PageResult:
+        return PageResult(count=0)
+"""
+
+
+def test_cli_runs_an_endpoint_from_an_installed_package(tmp_path: Path):
+    (tmp_path / "plugin_probe.py").write_text(_PLUGIN_MODULE)
+    dist_info = tmp_path / "plugin_probe-0.1.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nName: plugin-probe\nVersion: 0.1\n")
+    (dist_info / "entry_points.txt").write_text(
+        "[sonde.endpoints]\nplugin-probe = plugin_probe:PluginProbe\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+
+    def sonde(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - the arguments are this test's literals
+            [sys.executable, "-m", "sonde", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+
+    listing = sonde("--help")
+    assert listing.returncode == 0, listing.stderr
+    assert "plugin-probe" in listing.stdout
+    usage = sonde("plugin-probe", "--help")
+    assert usage.returncode == 0, usage.stderr
+    assert "--max-requests" in usage.stdout
 
 
 def test_parser_lists_endpoint_subcommands():

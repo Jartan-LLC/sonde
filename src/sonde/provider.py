@@ -9,7 +9,7 @@ A Provider captures everything that varies by API rather than by endpoint:
 
 The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
 IETF rate-limit header draft, and no auth.
-Subclasses specialise. Endpoints choose a provider in `Endpoint._make_provider()`.
+Subclasses specialise. Endpoints choose a provider in `Endpoint.make_provider()`.
 """
 
 from __future__ import annotations
