@@ -13,6 +13,7 @@ from sonde.logconfig import (
     JsonFormatter,
     PlainFormatter,
     register_log_secrets,
+    scrub,
     setup_logging,
 )
 
@@ -240,6 +241,18 @@ class TestSecretRedaction:
     def test_values_too_short_to_be_credentials_are_ignored(self):
         register_log_secrets(["", "x", "realsecret"])
         assert logconfig._SECRETS == ["realsecret"]
+
+    @pytest.mark.parametrize(
+        ("secret", "echo"),
+        [
+            ("abc/defGHIJ", r"abc\/defGHIJ"),  # JSON lets an encoder escape "/"
+            ('tok"en12345', r"tok\"en12345"),
+            ("tökenvalue", r"t\u00f6kenvalue"),
+        ],
+    )
+    def test_json_escaped_echo_is_redacted(self, secret: str, echo: str):
+        register_log_secrets([secret])
+        assert scrub(f'{{"error": "bad {echo}"}}') == '{"error": "bad ***"}'
 
     def test_longer_secret_is_redacted_whole(self):
         register_log_secrets(["abcdefgh", "abcdefgh12345"])

@@ -19,11 +19,16 @@ _MIN_SECRET_LEN = 8
 def register_log_secrets(values: Iterable[str]) -> None:
     """Register secret substrings for `scrub` to replace from now on.
 
-    Values too short to be a credential are skipped.
+    Each value's JSON-escaped forms are registered too, so a credential echoed in a JSON
+    body is redacted. Values too short to be a credential are skipped.
     """
     for v in values:
-        if len(v) >= _MIN_SECRET_LEN and v not in _SECRETS:
-            _SECRETS.append(v)
+        if len(v) < _MIN_SECRET_LEN:
+            continue
+        escaped = json.dumps(v)[1:-1]
+        for form in (v, escaped, escaped.replace("/", "\\/")):  # JSON may escape "/"
+            if form not in _SECRETS:
+                _SECRETS.append(form)
     _SECRETS.sort(key=len, reverse=True)  # so a shorter secret can't split a longer one
 
 
