@@ -38,14 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
   report's JSON is unchanged.
 - `requests` and `httpx` are bounded below their next major versions (`<3` and `<1`).
-- The container image's output is unbuffered, so logs reach `docker logs` as they are
-  written.
 - The `latest` container image tag moves only when the released version is the highest
   so far, so a patch to an older release line doesn't take it.
 
+### Removed
+
+- The `0` container image tag. It stays on 0.1.0: pull `0.2`, a full version, or
+  `latest`.
+
 ### Fixed
 
-- A burst the same size as the last one in `--burst-sizes` gets its cooldown.
+- A burst earlier in `--burst-sizes` that repeats the last size, such as the first 50 in
+  `10,50,50`, gets its cooldown rather than skipping it.
 - The sweep's floor message names no interval, rather than printing `Nones`, when the
   first interval tried throttles.
 - `--burst-sizes` and `--sweep-intervals` refuse zero and negative values, which crashed
@@ -55,8 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Logs redact the credentials each provider declares for its headers and its query
   parameters, including their percent-encoded forms in a quoted URL. The CLI no longer
-  guesses credentials from header formats, and a configured value too short to be a real
-  credential is ignored, rather than masked everywhere it appears in the logs.
+  guesses credentials from header formats: a provider that sends a credential in a header
+  must return it from `credentials()`, or only the whole value of an `Authorization`,
+  `Cookie`, `Proxy-Authorization` or `X-API-Key` header is redacted. A configured value
+  too short to be a real credential is ignored, rather than masked everywhere it appears
+  in the logs.
 - Error text from a response or a failed connection is scrubbed of credentials before it
   is truncated or logged, and so are the response headers the report records.
 - An error body is read as UTF-8, whatever charset the response declares or the HTTP
