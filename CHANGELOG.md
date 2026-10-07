@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `requests` and `httpx` are capped below their next major versions.
+- `requests` is capped at `<3` and `httpx` at `<1`.
 - The `latest` image tag moves only for the highest release, so a patch to an older
   release line doesn't take it.
 
@@ -40,13 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- The response headers the report records are redacted, not only the logs.
+- A credential echoed in a response header is redacted in the report's `sanity.headers`
+  too, not only in the logs.
 - An error message cut at its 200-character limit no longer keeps part of a credential.
-- An echoed credential is redacted however the response's charset or a JSON encoder
-  altered it. Two exceptions: one in a UTF-16 or UTF-32 body, which 0.1.0 redacted when
-  the charset was declared, and one escaped twice, as in JSON nested inside a JSON string.
-- A configured value shorter than 8 characters isn't treated as a credential, so it is no
-  longer masked everywhere it appears in the logs.
+- An echoed credential is redacted even when the response's charset or a JSON encoder
+  altered it. Two cases still aren't redacted: a credential in a UTF-16 or UTF-32 body,
+  which 0.1.0 redacted when the response declared that charset, and one JSON-escaped
+  twice, as in JSON nested inside a JSON string.
 
 ## [0.1.0] - 2026-07-02
 
