@@ -116,7 +116,7 @@ Write the endpoint in your own package. Once the package is installed alongside 
    my-endpoint = "my_package.endpoints:MyEndpoint"
    ```
 
-Import what you need from `sonde`; its other modules are internal. While sonde is 0.x, a minor release can change the names `sonde` exports, and the changelog says how.
+Import what you need from `sonde`: its exports are the plugin API. While sonde is 0.x, a minor release can change them, and the changelog says how.
 
 Minimal example:
 

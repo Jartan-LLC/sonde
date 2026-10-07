@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonde.phases` is a package, split into modules by phase. Its public names import from
   `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
 - Providers read their credentials from the environment when they are constructed.
-- `Endpoint._make_provider()` is now `Endpoint.make_provider()`.
+- `Endpoint._make_provider()` is now `Endpoint.make_provider()`. Rename your override: one
+  still named `_make_provider` is never called, and the endpoint gets the generic provider.
 - `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
   rate-limit headers, rather than a dict. The phases return typed results too
   (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the

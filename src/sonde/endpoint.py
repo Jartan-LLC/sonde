@@ -136,7 +136,7 @@ def register[E: type[Endpoint]](cls: E) -> E:
 
 
 class PluginError(Exception):
-    """An installed package's endpoint entry point couldn't be loaded or registered."""
+    """An endpoint couldn't be loaded, registered, or given its CLI arguments."""
 
 
 _PLUGIN_GROUP = "sonde.endpoints"
