@@ -39,13 +39,37 @@ class BurstConfig:
     recovery_polls: int
 
 
+@dataclass(frozen=True)
+class BurstRow:
+    """One burst's outcome.
+
+    Attributes:
+        burst_size: Requests in the burst.
+        ok_200: Successful responses.
+        throttled_429: Throttled responses.
+        other: Every other outcome, errors and budget refusals included.
+        wall_seconds: The burst's wall time.
+        launch_spread_ms: The time from the first request's launch to the last's.
+        max_retry_after: The longest Retry-After among the responses, in seconds, or None
+            when none sent one.
+    """
+
+    burst_size: int
+    ok_200: int
+    throttled_429: int
+    other: int
+    wall_seconds: float
+    launch_spread_ms: float
+    max_retry_after: float | None
+
+
 def phase_burst(
     probe: Probe, cursor_pool: list[Any], config: BurstConfig
-) -> tuple[list[dict[str, Any]], float | None]:
+) -> tuple[list[BurstRow], float | None]:
     """Fire bursts of concurrent requests, measuring the window on the first throttled one.
 
     Returns:
-        One report row per burst, and the measured window in seconds (None if no burst
+        One row per burst, and the measured window in seconds (None if no burst
         was throttled or the window couldn't be measured).
     """
     if not config.sizes:
@@ -144,8 +168,8 @@ async def _one_burst(
 
 async def _run_bursts(
     probe: Probe, cursor_pool: list[Any], config: BurstConfig
-) -> tuple[list[dict[str, Any]], float | None]:
-    results: list[dict[str, Any]] = []
+) -> tuple[list[BurstRow], float | None]:
+    results: list[BurstRow] = []
     measured_window: float | None = None
     cursors = cursor_cycle(cursor_pool)
     biggest = max(config.sizes)
@@ -165,23 +189,23 @@ async def _run_bursts(
             row = _summarise_burst(outcome)
             # Recovery is async, so the window is measured here, on the first throttled
             # burst, not in the bookkeeping helper.
-            if row["throttled_429"] > 0 and measured_window is None:
-                if row["max_retry_after"]:
-                    measured_window = row["max_retry_after"]
+            if row.throttled_429 > 0 and measured_window is None:
+                if row.max_retry_after:
+                    measured_window = row.max_retry_after
                     logger.info("    server-provided window: %.0fs", measured_window)
                 else:
                     measured_window = await _measure_recovery(probe, client, cursor_pool, config)
             results.append(row)
 
-            wait = measured_window or row["max_retry_after"] or config.cooldown
+            wait = measured_window or row.max_retry_after or config.cooldown
             if i < len(config.sizes) - 1 and probe.budget.remaining() > 0:
                 logger.debug("    cooling down %.0fs before next burst...", wait)
                 await asyncio.sleep(wait)
     return results, measured_window
 
 
-def _summarise_burst(outcome: _BurstOutcome) -> dict[str, Any]:
-    """Count one burst's outcomes and build its report row."""
+def _summarise_burst(outcome: _BurstOutcome) -> BurstRow:
+    """Count one burst's outcomes and build its row."""
     batch, elapsed, spread_ms = outcome.results, outcome.elapsed_s, outcome.spread_ms
     n = len(batch)
     ok = sum(1 for r in batch if r.rclass == core.RClass.OK)
@@ -190,15 +214,15 @@ def _summarise_burst(outcome: _BurstOutcome) -> dict[str, Any]:
     retry_afters = [r.retry_after for r in batch if r.retry_after]
     max_ra = max(retry_afters) if retry_afters else None
 
-    row: dict[str, Any] = {
-        "burst_size": n,
-        "ok_200": ok,
-        "throttled_429": c429,
-        "other": other,
-        "wall_seconds": round(elapsed, 3),
-        "launch_spread_ms": round(spread_ms, 1),
-        "max_retry_after": max_ra,
-    }
+    row = BurstRow(
+        burst_size=n,
+        ok_200=ok,
+        throttled_429=c429,
+        other=other,
+        wall_seconds=round(elapsed, 3),
+        launch_spread_ms=round(spread_ms, 1),
+        max_retry_after=max_ra,
+    )
     logger.info(
         "  burst=%-4s 200=%-4s 429=%-4s other=%-3s in %.2fs  launch_spread=%.0fms  retry_after=%s",
         n,

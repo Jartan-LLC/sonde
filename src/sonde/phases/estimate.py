@@ -8,18 +8,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sonde.endpoint import Endpoint
-from sonde.provider import has_authoritative_limit
+from sonde.phases.burst import BurstRow
+from sonde.phases.sequential import SequentialSummary
+from sonde.provider import RateLimit, authoritative_limit
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Measurements:
     """What the earlier phases found, which the estimate turns into a rate.
 
     Attributes:
         page_count: Items per successful page.
-        rate_limit: The provider's parse of the rate-limit headers.
+        rate_limit: The provider's parse of the rate-limit headers, if there were any.
         seq_summary: `phase_seq`'s summary.
         burst_results: `phase_burst`'s rows.
         measured_window: The throttle window `phase_burst` measured, in seconds.
@@ -27,9 +29,9 @@ class Measurements:
     """
 
     page_count: int
-    rate_limit: dict[str, Any]
-    seq_summary: dict[str, Any] = field(default_factory=dict[str, Any])
-    burst_results: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    rate_limit: RateLimit | None
+    seq_summary: SequentialSummary
+    burst_results: list[BurstRow] = field(default_factory=list[BurstRow])
     measured_window: float | None = None
     swept_interval: float | None = None
 
@@ -51,9 +53,9 @@ def _safe_rate(m: Measurements, margin: float) -> _Rate:
     Priority: authoritative headers, the swept floor, the inferred token bucket,
     then the sequential fallbacks.
     """
-    rl = m.rate_limit
-    if has_authoritative_limit(rl):
-        limit, window = rl["limit"], rl["window_s"]
+    stated = authoritative_limit(m.rate_limit)
+    if stated is not None:
+        limit, window = stated
         max_per_min = limit * 60.0 / window
         even = window / limit
         interval = even / margin
@@ -93,26 +95,26 @@ def _safe_rate(m: Measurements, margin: float) -> _Rate:
             ),
         )
 
-    fully_ok = [r for r in m.burst_results if r["throttled_429"] == 0]
+    fully_ok = [r for r in m.burst_results if r.throttled_429 == 0]
     if fully_ok and m.measured_window and m.measured_window > 0:
-        bucket = max(r["burst_size"] for r in fully_ok)
+        bucket = max(r.burst_size for r in fully_ok)
         return _Rate(
             per_min=(bucket / m.measured_window) * 60.0 * margin,
             basis=f"INFERRED bucket≈{bucket}/window≈{m.measured_window:.1f}s (model-dependent)",
         )
 
     seq = m.seq_summary
-    if seq.get("first_429_at_request"):
-        n = seq["successful_before_429"]
-        t = seq["wall_seconds"] or 1
+    if seq.first_429_at_request:
+        n = seq.successful_before_429
+        t = seq.wall_seconds or 1
         return _Rate(per_min=(n / t) * 60.0 * margin, basis=f"sequential {n} req / {t:.1f}s")
-    if seq.get("seq_req_per_sec"):
+    if seq.seq_req_per_sec:
         # Nothing throttled anywhere, so there's no measured ceiling. Treat observed
         # throughput as a soft ceiling, apply --margin, then halve again for the
         # extra uncertainty — this is the most conservative rung by construction.
         factor = 0.5 * margin
         return _Rate(
-            per_min=seq["seq_req_per_sec"] * 60.0 * factor,
+            per_min=seq.seq_req_per_sec * 60.0 * factor,
             basis=f"no 429 observed; {factor:.0%} of measured sequential throughput",
         )
     return _Rate()

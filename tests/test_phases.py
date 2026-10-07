@@ -4,6 +4,7 @@ resolve instantly and deterministically."""
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -15,6 +16,28 @@ from sonde.phases import burst, probe, sweep
 from sonde.provider import Provider
 from tests.helpers import FakeClock, FakeEndpoint, Handler, make_bucket, make_probe
 
+# A sequential phase that measured nothing, so neither sequential rung of the estimate applies.
+_NO_SEQ = phases.SequentialSummary(
+    successful_before_429=0,
+    first_429_at_request=None,
+    wall_seconds=0.0,
+    seq_req_per_sec=None,
+    avg_latency_ms=None,
+    retry_after=None,
+)
+
+
+def _burst(size: int, throttled: int) -> phases.BurstRow:
+    return phases.BurstRow(
+        burst_size=size,
+        ok_200=size - throttled,
+        throttled_429=throttled,
+        other=0,
+        wall_seconds=0.1,
+        launch_spread_ms=1.0,
+        max_retry_after=None,
+    )
+
 
 def test_sequential_trips_429(
     clock: FakeClock, monkeypatch: pytest.MonkeyPatch, fake_endpoint: FakeEndpoint
@@ -22,8 +45,8 @@ def test_sequential_trips_429(
     # bucket of 10, slow refill -> the 11th back-to-back request throttles
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=60.0, capacity=10))
     summary, _ = phases.phase_seq(make_probe(fake_endpoint, core.Budget(1000)), cap=50)
-    assert summary["successful_before_429"] == 10
-    assert summary["first_429_at_request"] == 11
+    assert summary.successful_before_429 == 10
+    assert summary.first_429_at_request == 11
 
 
 def test_sequential_no_429_when_limit_high(
@@ -31,8 +54,8 @@ def test_sequential_no_429_when_limit_high(
 ):
     monkeypatch.setattr(core, "fetch", make_bucket(refill_period=0.001, capacity=10000))
     summary, _ = phases.phase_seq(make_probe(fake_endpoint, core.Budget(1000)), cap=30)
-    assert summary["first_429_at_request"] is None
-    assert summary["successful_before_429"] == 30
+    assert summary.first_429_at_request is None
+    assert summary.successful_before_429 == 30
 
 
 def test_sweep_finds_floor(
@@ -51,8 +74,8 @@ def test_sweep_finds_floor(
         ),
     )
     assert floor == 0.05  # 0.03 throttles from empty, 0.05 is the fastest clean one
-    assert rows[-1]["clean"] is False
-    assert all(r["bucket_emptied"] for r in rows)
+    assert rows[-1].clean is False
+    assert all(r.bucket_emptied for r in rows)
 
 
 def test_sweep_aborts_when_undrainable(
@@ -122,11 +145,9 @@ def test_summarise_burst_counts():
         core.Result(429, 0.01, retry_after=5.0) for _ in range(3)
     ]
     row = burst._summarise_burst(burst._BurstOutcome(batch, elapsed_s=0.2, spread_ms=4.0))
-    assert row["ok_200"] == 7
-    assert row["throttled_429"] == 3
-    assert row["max_retry_after"] == 5.0
-    # window decision (Retry-After vs adaptive recovery) lives at the async call
-    # site now, so it's exercised in test_burst.py, not here.
+    assert row.ok_200 == 7
+    assert row.throttled_429 == 3
+    assert row.max_retry_after == 5.0
 
 
 def test_estimate_prefers_headers():
@@ -142,6 +163,7 @@ def test_estimate_prefers_headers():
         phases.Measurements(
             page_count=100,
             rate_limit=rl,
+            seq_summary=_NO_SEQ,
             swept_interval=0.6,  # present, but headers should win
         ),
         margin=0.8,
@@ -154,12 +176,29 @@ def test_estimate_prefers_headers():
     assert est["estimated_minutes"] == pytest.approx(43.7, abs=0.5)
 
 
+def test_estimate_falls_back_to_sequential_throttle():
+    est = phases.phase_estimate(
+        FakeEndpoint(total=None, page_size=100),
+        phases.Measurements(
+            page_count=100,
+            rate_limit=None,
+            seq_summary=replace(
+                _NO_SEQ, successful_before_429=10, first_429_at_request=11, wall_seconds=2.0
+            ),
+        ),
+        margin=0.8,
+    )
+    assert est["safe_rate_basis"] == "sequential 10 req / 2.0s"
+    assert est["safe_rate_per_min"] == pytest.approx(240.0)  # 10 / 2.0s * 60 * 0.8
+
+
 def test_estimate_falls_back_to_sweep():
     est = phases.phase_estimate(
         FakeEndpoint(total=500_000, page_size=100),
         phases.Measurements(
             page_count=100,
-            rate_limit={},
+            rate_limit=None,
+            seq_summary=_NO_SEQ,
             swept_interval=0.05,
         ),
         margin=0.8,
@@ -174,7 +213,8 @@ def test_estimate_rate_only_without_total():
         FakeEndpoint(total=None, page_size=100),
         phases.Measurements(
             page_count=100,
-            rate_limit={},
+            rate_limit=None,
+            seq_summary=_NO_SEQ,
             swept_interval=0.05,
         ),
         margin=0.8,
@@ -193,7 +233,8 @@ def test_estimate_zero_total_reports_zero_pages():
         FakeEndpoint(total=0, page_size=100),
         phases.Measurements(
             page_count=100,
-            rate_limit={},
+            rate_limit=None,
+            seq_summary=_NO_SEQ,
             swept_interval=0.05,
         ),
         margin=0.8,
@@ -209,11 +250,9 @@ def test_estimate_infers_from_token_bucket():
         FakeEndpoint(total=None, page_size=100),
         phases.Measurements(
             page_count=100,
-            rate_limit={},
-            burst_results=[
-                {"burst_size": 10, "throttled_429": 0},
-                {"burst_size": 20, "throttled_429": 3},  # throttled -> excluded from bucket
-            ],
+            rate_limit=None,
+            seq_summary=_NO_SEQ,
+            burst_results=[_burst(10, 0), _burst(20, 3)],  # the throttled one isn't the bucket
             measured_window=12.0,
         ),
         margin=0.8,
@@ -232,8 +271,9 @@ def test_estimate_no_throttle_fallback_scales_with_margin():
             FakeEndpoint(total=None, page_size=100),
             phases.Measurements(
                 page_count=100,
-                rate_limit={},
-                seq_summary={"seq_req_per_sec": 10.0},  # no first_429: the no-throttle fallback
+                rate_limit=None,
+                # no first_429: the no-throttle fallback
+                seq_summary=replace(_NO_SEQ, seq_req_per_sec=10.0),
                 burst_results=[],
                 measured_window=None,
                 swept_interval=None,

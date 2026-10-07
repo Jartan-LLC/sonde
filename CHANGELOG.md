@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python 3.14 support.
 - Sphinx docs with an API reference generated from the docstrings, built by `make docs`.
 - `core.parse_response`, `core.request_args`, `logconfig.scrub` and
-  `provider.has_authoritative_limit` as public functions.
+  `provider.authoritative_limit` as public functions.
 - `Provider.credentials()`: the raw secrets in a provider's auth headers, which the CLI
   redacts from logs.
 
@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sonde.phases` is a package, split into modules by phase. Its public names import from
   `sonde.phases` as before; phase log records come from `sonde.phases.<module>` loggers.
 - Providers read their credentials from the environment when they are constructed.
+- `Provider.parse_rate_limit` returns a `RateLimit`, or None when the response has no
+  rate-limit headers, rather than a dict. The phases return typed results too
+  (`SequentialSummary`, `BurstRow`, `SweepRow`), and `Measurements` holds them; the
+  report's JSON is unchanged.
 
 ### Fixed
 
@@ -48,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential is ignored, rather than masked everywhere it appears in the logs.
 - Error text from a response or a failed connection is scrubbed of credentials before it
   is truncated or logged, and so are the response headers the report records.
+- An error body is read as UTF-8, whatever charset the response declares or the HTTP
+  client guesses, so a legacy charset can't alter an echoed credential and slip it past
+  the redaction. A credential echoed in a UTF-16 or UTF-32 body isn't redacted.
 
 ## [0.1.0] - 2026-07-02
 

@@ -3,18 +3,13 @@
 A Provider captures everything that varies by API rather than by endpoint:
 
 - `classify(response)`: what counts as success or throttling.
-- `parse_rate_limit(headers)`: the API's rate-limit headers, normalised.
+- `parse_rate_limit(headers)`: the API's rate-limit headers, as a `RateLimit`.
 - `auth_headers()` and `auth_params()`: credentials as headers or query parameters.
 - `credentials()`: the raw secrets inside those headers, so logs can redact them.
 
 The base `Provider` is a working generic provider: 200 is ok, 429 is throttled, the
-IETF `RateLimit`-draft header format, and no auth.
+IETF rate-limit header draft, and no auth.
 Subclasses specialise. Endpoints choose a provider in `Endpoint._make_provider()`.
-
-The normalised rate-limit dict has the keys `limit`, `window_s`, `remaining`,
-`reset_s`, `policies` and `raw`, each optional and possibly None. `reset_s` is
-always seconds until the reset (epoch formats are converted); `window_s` is None when
-the API doesn't state it and no default is known.
 """
 
 from __future__ import annotations
@@ -22,12 +17,37 @@ from __future__ import annotations
 import contextlib
 import os
 import time
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, override
 
 from sonde.core import RClass, default_rclass
 
-__all__ = ["GitHubProvider", "Provider", "RobloxProvider", "has_authoritative_limit"]
+__all__ = ["GitHubProvider", "Provider", "RateLimit", "RobloxProvider", "authoritative_limit"]
+
+
+@dataclass(frozen=True)
+class RateLimit:
+    """An API's rate-limit headers, normalised.
+
+    Attributes:
+        limit: Requests allowed per window; with several policies, the one that binds.
+        window_s: The window in seconds, or None when the API doesn't state it and no
+            default is known.
+        remaining: Requests left in the current window, when stated.
+        reset_s: Seconds until the window resets, when stated (epoch formats are
+            converted).
+        policies: Every (limit, window_s) policy, as the headers list them or the provider
+            knows them.
+        raw: The rate-limit headers as received, with lower-cased names.
+    """
+
+    limit: int
+    window_s: int | None
+    remaining: int | None
+    reset_s: int | None
+    policies: tuple[tuple[int, int | None], ...]
+    raw: dict[str, str]
 
 
 class Provider:
@@ -39,16 +59,16 @@ class Provider:
         """Return how a response counts: ok, throttled, or an error."""
         return default_rclass(resp.status_code)
 
-    def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
-        """Normalise the response's rate-limit headers, or return {} when it has none.
+    def parse_rate_limit(self, headers: dict[str, str] | None) -> RateLimit | None:
+        """Normalise the response's rate-limit headers, or return None when it has none.
 
-        >>> Provider().parse_rate_limit({"X-RateLimit-Limit": "60;w=60, 1000;w=3600"})["limit"]
+        >>> Provider().parse_rate_limit({"X-RateLimit-Limit": "60;w=60, 1000;w=3600"}).limit
         1000
         """
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit_raw = low.get("x-ratelimit-limit")
         if not limit_raw:
-            return {}
+            return None
 
         policies: list[tuple[int, int | None]] = []
         for raw_item in str(limit_raw).split(","):
@@ -76,16 +96,16 @@ class Provider:
         elif policies:
             limit, window_s = min(policies, key=lambda t: t[0])[0], None
         else:
-            return {}
+            return None
 
-        return {
-            "limit": limit,
-            "window_s": window_s,
-            "remaining": _first_int(low.get("x-ratelimit-remaining")),
-            "reset_s": _first_int(low.get("x-ratelimit-reset")),  # already seconds-until
-            "policies": policies,
-            "raw": {k: v for k, v in low.items() if k.startswith("x-ratelimit")},
-        }
+        return RateLimit(
+            limit=limit,
+            window_s=window_s,
+            remaining=_first_int(low.get("x-ratelimit-remaining")),
+            reset_s=_first_int(low.get("x-ratelimit-reset")),  # already seconds-until
+            policies=tuple(policies),
+            raw={k: v for k, v in low.items() if k.startswith("x-ratelimit")},
+        )
 
     def auth_headers(self) -> dict[str, str]:
         """Return the credentials sent as headers."""
@@ -164,21 +184,21 @@ class GitHubProvider(Provider):
         return super().classify(resp)
 
     @override
-    def parse_rate_limit(self, headers: dict[str, str] | None) -> dict[str, Any]:
+    def parse_rate_limit(self, headers: dict[str, str] | None) -> RateLimit | None:
         low = {k.lower(): v for k, v in (headers or {}).items()}
         limit = _first_int(low.get("x-ratelimit-limit"))
         if limit is None:
-            return {}
+            return None
         reset_epoch = _first_int(low.get("x-ratelimit-reset"))
         reset_s = max(0, reset_epoch - int(time.time())) if reset_epoch is not None else None
-        return {
-            "limit": limit,
-            "window_s": self.window_s,  # not in headers; known default
-            "remaining": _first_int(low.get("x-ratelimit-remaining")),
-            "reset_s": reset_s,  # epoch -> seconds-until
-            "policies": [(limit, self.window_s)],
-            "raw": {k: v for k, v in low.items() if k.startswith("x-ratelimit")},
-        }
+        return RateLimit(
+            limit=limit,
+            window_s=self.window_s,  # not in headers; known default
+            remaining=_first_int(low.get("x-ratelimit-remaining")),
+            reset_s=reset_s,  # epoch -> seconds-until
+            policies=((limit, self.window_s),),
+            raw={k: v for k, v in low.items() if k.startswith("x-ratelimit")},
+        )
 
     @override
     def auth_headers(self) -> dict[str, str]:
@@ -201,6 +221,8 @@ def _first_int(raw: Any) -> int | None:
         return None
 
 
-def has_authoritative_limit(rate_limit: dict[str, Any]) -> bool:
-    """Return whether the parsed rate-limit headers state both a limit and its window."""
-    return bool(rate_limit.get("limit") and rate_limit.get("window_s"))
+def authoritative_limit(rate_limit: RateLimit | None) -> tuple[int, int] | None:
+    """Return the (limit, window_s) pair when both are known and nonzero, else None."""
+    if rate_limit is None or not rate_limit.limit or not rate_limit.window_s:
+        return None
+    return rate_limit.limit, rate_limit.window_s

@@ -38,14 +38,10 @@ Probe GitHub stargazers:
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-sonde github-stargazers --owner anthropics --repo anthropic-sdk-python --total-items 5000
+sonde github-stargazers --owner Jartan-LLC --repo sonde
 ```
 
-Anonymous probing (no auth) works too -- you'll just hit lower rate limits:
-
-```bash
-sonde github-stargazers --owner torvalds --repo linux --total-items 190000
-```
+Without `GITHUB_TOKEN`, sonde probes anonymously, at GitHub's lower rate limit.
 
 Results are written to `sonde_report.json` by default:
 
@@ -98,8 +94,8 @@ GitHub `api.github.com/repos/{owner}/{repo}/stargazers` -- users who starred a r
 
 | Option | Required | Default | Description |
 |---|---|---|---|
-| `--owner` | Yes | -- | Repository owner/org (e.g. `anthropics`) |
-| `--repo` | Yes | -- | Repository name (e.g. `anthropic-sdk-python`) |
+| `--owner` | Yes | -- | Repository owner or organization (e.g. `Jartan-LLC`) |
+| `--repo` | Yes | -- | Repository name (e.g. `sonde`) |
 | `--page-size` | No | 100 | Items per page (capped at 100) |
 | `--total-items` | No | None | Known stargazer count, for wall-clock estimate |
 
@@ -199,7 +195,7 @@ docker run --rm -v "$(pwd):/data" -e ROBLOX_COOKIE sonde \
 
 ```bash
 docker run --rm -v "$(pwd):/data" -e GITHUB_TOKEN sonde \
-    github-stargazers --owner anthropics --repo anthropic-sdk-python --total-items 5000
+    github-stargazers --owner Jartan-LLC --repo sonde
 ```
 
 The container writes `sonde_report.json` to `/data` (the mounted volume).

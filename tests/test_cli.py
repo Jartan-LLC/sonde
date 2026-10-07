@@ -10,12 +10,22 @@ from typing import Any
 
 import pytest
 
-from sonde import cli, core, endpoint
+from sonde import cli, core, endpoint, phases
 from sonde.cli import build_parser
 from sonde.endpoint import Endpoint
 from sonde.endpoints.asset_owners import AssetOwnersEndpoint
 from sonde.provider import RobloxProvider
 from tests.helpers import RLH_420, FakeClock, Handler, make_bucket, make_burst_handler
+
+
+@pytest.fixture
+def no_burst(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail fast if --skip-burst stops working: the real burst would wait out its cooldown."""
+
+    def must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the burst phase ran despite --skip-burst")
+
+    monkeypatch.setattr(phases, "phase_burst", must_not_run)
 
 
 def test_parser_lists_endpoint_subcommands():
@@ -120,6 +130,7 @@ def test_run_uses_headers_and_skips_sweep(tmp_path: Path, monkeypatch: pytest.Mo
     assert json.loads(out.read_text())["endpoint"] == "asset-owners"
 
 
+@pytest.mark.usefixtures("no_burst")
 def test_run_headerless_runs_sweep(
     clock: FakeClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -136,9 +147,94 @@ def test_run_headerless_runs_sweep(
         "500",
     )
     report = cli.run(args)
+    assert report["ratelimit_headers"] == {}
     assert report["swept_floor_interval_s"] == 0.05
     assert report["estimate"]["header_limit"] is None
     assert "measured floor" in report["estimate"]["safe_rate_basis"]
+
+
+def test_run_report_shape(clock: FakeClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Report consumers read these sections; every one is filled here.
+    monkeypatch.setattr(core, "fetch", make_bucket(60.0 / 420, 420, headers=RLH_420))
+    args, out = _args(tmp_path, "--force-sweep", "--sweep-intervals", "0.2", "--sweep-count", "5")
+    cli.run(args)
+    report = json.loads(out.read_text())
+    assert list(report) == [
+        "endpoint",
+        "provider",
+        "sanity",
+        "ratelimit_headers",
+        "sequential",
+        "burst",
+        "measured_window_seconds",
+        "sweep",
+        "swept_floor_interval_s",
+        "estimate",
+        "requests_used",
+    ]
+    assert list(report["sanity"]) == ["status", "rclass", "items", "headers"]
+    assert list(report["ratelimit_headers"]) == [
+        "limit",
+        "window_s",
+        "remaining",
+        "reset_s",
+        "policies",
+        "raw",
+    ]
+    assert report["ratelimit_headers"]["policies"] == [
+        [420, None],
+        [420, 60],
+        [420, 60],
+        [70000, None],
+    ]
+    # (key, value) pairs, so the key order is pinned too.
+    assert list(report["sequential"].items()) == [
+        ("successful_before_429", 15),
+        ("first_429_at_request", None),
+        ("wall_seconds", 0.0),
+        ("seq_req_per_sec", None),
+        ("avg_latency_ms", 0.0),
+        ("retry_after", None),
+    ]
+    assert [list(row.items()) for row in report["burst"]] == [
+        [
+            ("burst_size", size),
+            ("ok_200", size),
+            ("throttled_429", 0),
+            ("other", 0),
+            ("wall_seconds", 0.0),
+            ("launch_spread_ms", 0.0),
+            ("max_retry_after", None),
+        ]
+        for size in (10, 20)
+    ]
+    assert [list(row.items()) for row in report["sweep"]] == [
+        [
+            ("interval_s", 0.2),
+            ("drain_requests", 407),
+            ("bucket_emptied", True),
+            ("requests", 5),
+            ("throttled_429", 0),
+            ("throttle_frac", 0.0),
+            ("clean", True),
+            ("effective_req_per_s", 5.0),
+        ]
+    ]
+
+
+@pytest.mark.usefixtures("no_burst")
+def test_run_skip_flags_skip_their_phases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def must_not_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the sweep ran despite --skip-sweep")
+
+    # No rate-limit headers, so without --skip-sweep the sweep would run.
+    monkeypatch.setattr(core, "fetch", make_bucket(0.05, 30, headers={"server": "x"}))
+    monkeypatch.setattr(phases, "phase_sweep", must_not_run)
+    args, _ = _args(tmp_path, "--skip-burst", "--skip-sweep")
+    report = cli.run(args)
+    assert report["burst"] == []
+    assert report["sweep"] == []
+    assert report["swept_floor_interval_s"] is None
 
 
 def test_run_aborts_on_non_200(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -421,6 +517,7 @@ def test_log_format_json_on_stderr(
     _assert_all_stderr_json(capfd.readouterr().err)
 
 
+@pytest.mark.usefixtures("no_burst")
 def test_log_format_json_sweep_path(
     clock: FakeClock,
     tmp_path: Path,
@@ -565,6 +662,7 @@ def test_main_keyboard_interrupt_exits_130(
 RLH_NO_WINDOW = {"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99"}
 
 
+@pytest.mark.usefixtures("no_burst")
 def test_log_format_json_limit_no_window(
     clock: FakeClock,
     tmp_path: Path,
@@ -597,6 +695,7 @@ def test_log_format_json_limit_no_window(
     _assert_all_stderr_json(capfd.readouterr().err)
 
 
+@pytest.mark.usefixtures("no_burst")
 def test_log_format_json_budget_exhaustion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -625,6 +724,7 @@ def test_log_format_json_budget_exhaustion(
     _assert_all_stderr_json(capfd.readouterr().err)
 
 
+@pytest.mark.usefixtures("no_burst")
 def test_log_format_json_drain_failure(
     clock: FakeClock,
     tmp_path: Path,

@@ -6,7 +6,7 @@ import time
 import pytest
 
 from sonde.core import RClass
-from sonde.provider import GitHubProvider, Provider, RobloxProvider
+from sonde.provider import GitHubProvider, Provider, RobloxProvider, authoritative_limit
 from tests.helpers import RLH_15, RLH_420, FakeResp
 
 
@@ -20,33 +20,43 @@ def test_generic_classify():
 
 def test_ietf_parse_420():
     rl = Provider().parse_rate_limit(RLH_420)
-    assert (rl["limit"], rl["window_s"]) == (420, 60)
-    assert rl["remaining"] == 419
-    assert rl["reset_s"] == 2
+    assert rl is not None
+    assert (rl.limit, rl.window_s) == (420, 60)
+    assert rl.remaining == 419
+    assert rl.reset_s == 2
 
 
 def test_ietf_parse_15():
     rl = Provider().parse_rate_limit(RLH_15)
-    assert (rl["limit"], rl["window_s"]) == (15, 60)
-    assert rl["remaining"] == 14
-    assert rl["reset_s"] == 21
+    assert rl is not None
+    assert (rl.limit, rl.window_s) == (15, 60)
+    assert rl.remaining == 14
+    assert rl.reset_s == 21
 
 
 def test_ietf_parse_absent():
-    assert Provider().parse_rate_limit({"server": "x"}) == {}
+    assert Provider().parse_rate_limit({"server": "x"}) is None
 
 
 def test_ietf_lowest_rate_binds():
     # Three policies, rates: 1000/3600=0.28/s, 50/60=0.83/s, 100/600=0.17/s.
     # The tightest SUSTAINED cap is the lowest rate (100/600s), not the smallest window.
     rl = Provider().parse_rate_limit({"x-ratelimit-limit": "1000;w=3600, 50;w=60, 100;w=600"})
-    assert (rl["limit"], rl["window_s"]) == (100, 600)
+    assert rl is not None
+    assert (rl.limit, rl.window_s) == (100, 600)
 
 
 def test_ietf_no_window():
     rl = Provider().parse_rate_limit({"x-ratelimit-limit": "500, 999"})
-    assert rl["window_s"] is None
-    assert rl["limit"] == 500
+    assert rl is not None
+    assert rl.window_s is None
+    assert rl.limit == 500
+
+
+def test_authoritative_limit_needs_a_limit_and_its_window():
+    assert authoritative_limit(Provider().parse_rate_limit(RLH_420)) == (420, 60)
+    assert authoritative_limit(Provider().parse_rate_limit({"x-ratelimit-limit": "500"})) is None
+    assert authoritative_limit(None) is None
 
 
 def test_roblox_auth_cookie_and_bearer(monkeypatch: pytest.MonkeyPatch):
@@ -65,7 +75,9 @@ def test_roblox_auth_anonymous(monkeypatch: pytest.MonkeyPatch):
 
 def test_roblox_uses_ietf_parse():
     # Roblox inherits the generic IETF parser unchanged
-    assert RobloxProvider().parse_rate_limit(RLH_420)["window_s"] == 60
+    rl = RobloxProvider().parse_rate_limit(RLH_420)
+    assert rl is not None
+    assert rl.window_s == 60
 
 
 def test_github_classify_403_throttle():
@@ -88,17 +100,19 @@ def test_github_parse_epoch_reset():
         "x-ratelimit-reset": str(now + 1800),  # epoch, 30 min out
     }
     rl = GitHubProvider().parse_rate_limit(hdr)
-    assert rl["limit"] == 5000
-    assert rl["remaining"] == 4999
-    assert rl["window_s"] == 3600  # injected known default
-    assert 1795 <= rl["reset_s"] <= 1800  # epoch converted to seconds-until
+    assert rl is not None
+    assert rl.limit == 5000
+    assert rl.remaining == 4999
+    assert rl.window_s == 3600  # injected known default
+    assert rl.reset_s in range(1795, 1801)  # epoch converted to seconds-until
 
 
 def test_github_parse_custom_window():
     rl = GitHubProvider(window_s=60).parse_rate_limit(
         {"x-ratelimit-limit": "30", "x-ratelimit-reset": str(int(time.time()) + 30)}
     )
-    assert rl["window_s"] == 60
+    assert rl is not None
+    assert rl.window_s == 60
 
 
 def test_github_auth_token(monkeypatch: pytest.MonkeyPatch):

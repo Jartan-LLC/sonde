@@ -12,7 +12,7 @@ pip install sonde
 
 ```bash
 export GITHUB_TOKEN="ghp_..."  # optional; anonymous probing hits lower limits
-sonde github-stargazers --owner anthropics --repo anthropic-sdk-python --total-items 5000
+sonde github-stargazers --owner Jartan-LLC --repo sonde
 ```
 
 sonde runs its phases, logs what it measures, and writes the full report to
