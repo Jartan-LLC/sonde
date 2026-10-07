@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import logging.config
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from types import TracebackType
@@ -16,27 +18,64 @@ _SECRETS: list[str] = []
 _MIN_SECRET_LEN = 8
 
 
+# JSON's two-character escapes, by the character each stands for.
+_SHORT_ESCAPES = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "\b": "b",
+    "\f": "f",
+    "\n": "n",
+    "\r": "r",
+    "\t": "t",
+}
+
+
 def register_log_secrets(values: Iterable[str]) -> None:
     """Register secret substrings for `scrub` to replace from now on.
 
-    Each value's JSON-escaped forms are registered too, so a credential echoed in a JSON
-    body is redacted. Values too short to be a credential are skipped.
+    Values too short to be a credential are skipped.
     """
     for v in values:
-        if len(v) < _MIN_SECRET_LEN:
-            continue
-        escaped = json.dumps(v)[1:-1]
-        for form in (v, escaped, escaped.replace("/", "\\/")):  # JSON may escape "/"
-            if form not in _SECRETS:
-                _SECRETS.append(form)
+        if len(v) >= _MIN_SECRET_LEN and v not in _SECRETS:
+            _SECRETS.append(v)
     _SECRETS.sort(key=len, reverse=True)  # so a shorter secret can't split a longer one
 
 
+def _unicode_escape(code: int) -> str:
+    """Return a regex for the JSON unicode escape of `code`, its hex digits in either case."""
+    digits = "".join(f"[{d}{d.upper()}]" if d.isalpha() else d for d in f"{code:04x}")
+    return re.escape("\\") + "u" + digits
+
+
+def _echo_pattern(secret: str) -> str:
+    """Return a regex for `secret` with any of its characters JSON-escaped, or none."""
+    parts: list[str] = []
+    for c in secret:
+        forms = [re.escape(c)]
+        if c in _SHORT_ESCAPES:
+            forms.append(re.escape("\\" + _SHORT_ESCAPES[c]))
+        # JSON escapes UTF-16 code units, so a character outside the BMP is a surrogate pair.
+        utf16 = c.encode("utf-16-be")
+        units = (int.from_bytes(utf16[i : i + 2]) for i in range(0, len(utf16), 2))
+        forms.append("".join(map(_unicode_escape, units)))
+        parts.append(f"(?:{'|'.join(forms)})")
+    return "".join(parts)
+
+
+@functools.lru_cache(maxsize=1)
+def _secrets_pattern(secrets: tuple[str, ...]) -> re.Pattern[str] | None:
+    return re.compile("|".join(map(_echo_pattern, secrets))) if secrets else None
+
+
 def scrub(text: str) -> str:
-    """Return `text` with every registered secret replaced by `***`."""
-    for secret in _SECRETS:
-        text = text.replace(secret, "***")
-    return text
+    """Return `text` with every registered secret replaced by `***`.
+
+    A secret also matches with any of its characters JSON-escaped, so an echo in a JSON
+    body is redacted however its encoder escaped it.
+    """
+    pattern = _secrets_pattern(tuple(_SECRETS))
+    return pattern.sub("***", text) if pattern else text
 
 
 class PlainFormatter(logging.Formatter):
