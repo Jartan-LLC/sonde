@@ -1,5 +1,5 @@
 # A stage, not an inline image in --mount: Dependabot only parses FROM lines.
-FROM ghcr.io/astral-sh/uv:0.13.1 AS uv-bin
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv-bin
 
 FROM python:3.12-slim AS base
 
